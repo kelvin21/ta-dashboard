@@ -10,10 +10,20 @@ import os
 import asyncio
 import sys
 
-# Add the script directory to Python path to ensure build_price_db can be imported
+# Add the script directory to Python path
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 if SCRIPT_DIR not in sys.path:
     sys.path.insert(0, SCRIPT_DIR)
+
+# Try to import database adapter (supports both SQLite and MongoDB)
+try:
+    from db_adapter import get_db_adapter
+    db = get_db_adapter()
+    HAS_DB_ADAPTER = True
+except ImportError:
+    db = None
+    HAS_DB_ADAPTER = False
+    st.warning("⚠️ db_adapter not found. Using legacy SQLite mode.")
 
 # OPTIMIZED: Make build_price_db optional and use environment variables
 try:
@@ -64,20 +74,29 @@ st.markdown("#### MACD Histogram Reversal — Overview")
 if 'selected_ticker' not in st.session_state:
     st.session_state.selected_ticker = None
 
-# Export commonly used functions for pages
-@st.cache_data(ttl=300)
-def get_all_tickers(db_path=DB_PATH, debug=False):
+# Export commonly used functions - updated to use db_adapter
+@st.cache_data(ttl=int(os.getenv("CACHE_TTL", "300")))
+def get_all_tickers(debug=False):
+    if HAS_DB_ADAPTER:
+        try:
+            return db.get_all_tickers(debug=debug)
+        except Exception as e:
+            if debug:
+                st.write(f"[DEBUG] DB adapter error: {e}")
+            return []
+    
+    # Fallback to legacy SQLite
     if HAS_BDB:
         try:
-            return bdb._get_distinct_tickers_from_db(db_path, debug=debug)
+            return bdb._get_distinct_tickers_from_db(DB_PATH, debug=debug)
         except Exception as e:
             if debug:
                 st.write(f"[DEBUG] Error in get_all_tickers: {e}")
     
-    if not os.path.exists(db_path):
+    if not os.path.exists(DB_PATH):
         return []
     try:
-        conn = sqlite3.connect(db_path)
+        conn = sqlite3.connect(DB_PATH)
         cur = conn.cursor()
         cur.execute("SELECT DISTINCT ticker FROM price_data WHERE ticker IS NOT NULL ORDER BY ticker")
         tickers = [r[0] for r in cur.fetchall()]
@@ -88,11 +107,21 @@ def get_all_tickers(db_path=DB_PATH, debug=False):
             st.write(f"[DEBUG] Fallback ticker query error: {e}")
         return []
 
-@st.cache_data(ttl=300)
-def load_price_range(ticker, start_date, end_date, db_path=DB_PATH):
-    if not os.path.exists(db_path):
+@st.cache_data(ttl=int(os.getenv("CACHE_TTL", "300")))
+def load_price_range(ticker, start_date, end_date):
+    if HAS_DB_ADAPTER:
+        try:
+            start_str = start_date if isinstance(start_date, str) else start_date.strftime("%Y-%m-%d")
+            end_str = end_date if isinstance(end_date, str) else end_date.strftime("%Y-%m-%d")
+            return db.load_price_range(ticker, start_str, end_str)
+        except Exception as e:
+            st.error(f"Database error: {e}")
+            return pd.DataFrame()
+    
+    # Fallback to legacy SQLite
+    if not os.path.exists(DB_PATH):
         return pd.DataFrame()
-    conn = sqlite3.connect(db_path)
+    conn = sqlite3.connect(DB_PATH)
     try:
         start_str = start_date if isinstance(start_date, str) else start_date.strftime("%Y-%m-%d")
         end_str = end_date if isinstance(end_date, str) else end_date.strftime("%Y-%m-%d")
