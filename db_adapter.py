@@ -64,6 +64,32 @@ class DatabaseAdapter:
                 "price_data.db"
             )
             self.conn = None
+            
+            # Auto-initialize database if it doesn't exist
+            self._ensure_sqlite_initialized()
+    
+    def _ensure_sqlite_initialized(self):
+        """Ensure SQLite database exists and has required tables."""
+        try:
+            from init_database import create_empty_database
+            create_empty_database(self.db_path)
+        except Exception as e:
+            # If initialization fails, create minimal schema
+            if not os.path.exists(self.db_path):
+                conn = sqlite3.connect(self.db_path)
+                cur = conn.cursor()
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS price_data (
+                        ticker TEXT NOT NULL,
+                        date TEXT NOT NULL,
+                        open REAL, high REAL, low REAL, close REAL,
+                        volume INTEGER,
+                        source TEXT DEFAULT 'manual',
+                        PRIMARY KEY (ticker, date, source)
+                    )
+                """)
+                conn.commit()
+                conn.close()
     
     def _create_mongo_indexes(self):
         """Create MongoDB indexes for performance."""

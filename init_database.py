@@ -1,6 +1,6 @@
 """
 Initialize empty database with proper schema.
-Run this to create a fresh database before using the dashboard.
+This will be called automatically on first run if database doesn't exist.
 """
 import sqlite3
 import os
@@ -8,10 +8,18 @@ import os
 def create_empty_database(db_path="price_data.db"):
     """Create empty database with correct schema."""
     
-    # Remove existing database if present
+    # Check if database already exists and has tables
     if os.path.exists(db_path):
-        print(f"⚠️ Database {db_path} already exists. Delete it manually if you want to recreate.")
-        return False
+        try:
+            conn = sqlite3.connect(db_path)
+            cur = conn.cursor()
+            cur.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='price_data'")
+            if cur.fetchone():
+                conn.close()
+                return True  # Database already initialized
+            conn.close()
+        except:
+            pass
     
     conn = sqlite3.connect(db_path)
     cur = conn.cursor()
@@ -64,12 +72,49 @@ def create_empty_database(db_path="price_data.db"):
     conn.commit()
     conn.close()
     
-    print(f"✅ Empty database created: {db_path}")
-    print("📝 Next steps:")
-    print("  1. Add tickers using the Admin panel in the dashboard")
-    print("  2. Use TCBS Historical Refresh to fetch data")
-    print("  3. Or use Intraday Update for today's data")
+    return True
+
+def add_sample_data(db_path="price_data.db"):
+    """Add sample ticker data for demo purposes."""
+    import pandas as pd
+    from datetime import datetime, timedelta
+    
+    conn = sqlite3.connect(db_path)
+    
+    # Add a few sample tickers
+    sample_tickers = ["VIC", "VHM", "HPG", "VNM", "TCB"]
+    
+    for ticker in sample_tickers:
+        # Generate 100 days of sample OHLCV data
+        dates = [(datetime.now() - timedelta(days=i)).strftime("%Y-%m-%d") for i in range(100, 0, -1)]
+        
+        for i, date in enumerate(dates):
+            # Simple random-walk price data
+            base_price = 50 + i * 0.1
+            data = {
+                'ticker': ticker,
+                'date': date,
+                'open': base_price,
+                'high': base_price * 1.02,
+                'low': base_price * 0.98,
+                'close': base_price * 1.01,
+                'volume': 1000000 + i * 10000,
+                'source': 'sample'
+            }
+            
+            conn.execute("""
+                INSERT OR IGNORE INTO price_data 
+                (ticker, date, open, high, low, close, volume, source)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """, (data['ticker'], data['date'], data['open'], data['high'], 
+                  data['low'], data['close'], data['volume'], data['source']))
+    
+    conn.commit()
+    conn.close()
     return True
 
 if __name__ == "__main__":
     create_empty_database()
+    # Uncomment to add sample data:
+    # add_sample_data()
+    print("✅ Database initialized successfully")

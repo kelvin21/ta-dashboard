@@ -15,6 +15,15 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 if SCRIPT_DIR not in sys.path:
     sys.path.insert(0, SCRIPT_DIR)
 
+# Auto-initialize database if it doesn't exist
+try:
+    from init_database import create_empty_database
+    DB_PATH_CHECK = os.getenv("PRICE_DB_PATH", os.path.join(SCRIPT_DIR, "price_data.db"))
+    if not os.path.exists(DB_PATH_CHECK):
+        create_empty_database(DB_PATH_CHECK)
+except Exception as e:
+    st.warning(f"⚠️ Could not initialize database: {e}")
+
 # Try to import database adapter (supports both SQLite and MongoDB)
 try:
     from db_adapter import get_db_adapter
