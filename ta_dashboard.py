@@ -359,7 +359,7 @@ def build_overview(tickers, start_date, end_date, lookback=20, max_rows=200):
             histW_val = float(histW.iat[-1]) if not histW.empty and not pd.isna(histW.iat[-1]) else np.nan
         
         # Pre-calculate monthly resampling on FULL dataset (don't clip yet)
-        df_m_full = df.set_index('date').resample('ME').agg({
+        df_m_full = df.set_index('date').resample('M').agg({  # ✅ Use 'M' for compatibility
             'open':'first',
             'high':'max',
             'low':'min',
