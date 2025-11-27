@@ -4,6 +4,9 @@ Verify MongoDB connection and migration status.
 import os
 import sys
 
+# HARDCODED CONNECTION STRING (Optional)
+HARDCODED_MONGODB_URI = "mongodb+srv://longhalucky2111_db_user:123dc456@cluster0.g4ndhy9.mongodb.net/?appName=Cluster0"
+
 # Load environment from .env file if it exists
 try:
     from dotenv import load_dotenv
@@ -18,24 +21,27 @@ def verify_mongodb_connection():
     
     # Check environment variables
     use_mongodb = os.getenv("USE_MONGODB", "false").lower()
-    mongodb_uri = os.getenv("MONGODB_URI", "")
+    mongodb_uri = HARDCODED_MONGODB_URI or os.getenv("MONGODB_URI", "")
     
     print(f"USE_MONGODB: {use_mongodb}")
-    print(f"MONGODB_URI: {'Set ✓' if mongodb_uri else 'Not set ✗'}\n")
-    
-    if use_mongodb != "true":
-        print("⚠️ USE_MONGODB is not set to 'true'")
-        print("Set it with: export USE_MONGODB=true")
-        return False
+    if HARDCODED_MONGODB_URI:
+        print(f"MONGODB_URI: Using HARDCODED value ✓")
+    else:
+        print(f"MONGODB_URI: {'Set from .env ✓' if mongodb_uri else 'Not set ✗'}\n")
     
     if not mongodb_uri:
         print("❌ MONGODB_URI not set")
-        print("Set it with: export MONGODB_URI='mongodb+srv://...'")
+        print("\nSet it by:")
+        print("1. Hardcode in verify_mongodb.py:")
+        print('   HARDCODED_MONGODB_URI = "mongodb+srv://..."')
+        print("2. PowerShell: $env:MONGODB_URI='mongodb+srv://...'")
+        print("3. Add to .env file")
         return False
     
     # Try to import pymongo
     try:
-        from pymongo import MongoClient
+        from pymongo.mongo_client import MongoClient
+        from pymongo.server_api import ServerApi
         print("✓ pymongo installed")
     except ImportError:
         print("❌ pymongo not installed")
@@ -45,11 +51,13 @@ def verify_mongodb_connection():
     # Try to connect
     try:
         print(f"\n🔗 Connecting to MongoDB...")
-        client = MongoClient(mongodb_uri, serverSelectionTimeoutMS=5000)
         
-        # Test connection
+        # Create client with ServerApi (MongoDB 4.0+ format)
+        client = MongoClient(mongodb_uri, server_api=ServerApi('1'))
+        
+        # Test connection with ping
         client.admin.command('ping')
-        print("✓ MongoDB connection successful!")
+        print("✓ Pinged your deployment. You successfully connected to MongoDB!")
         
         # Get database
         db_name = os.getenv("MONGODB_DB_NAME", "macd_reversal")
@@ -117,6 +125,7 @@ def verify_mongodb_connection():
         print("\nTroubleshooting:")
         print("1. Check your MONGODB_URI is correct")
         print("2. Verify network access in MongoDB Atlas")
+        print("   → Go to: Network Access → Add IP Address → 0.0.0.0/0")
         print("3. Ensure database user has correct permissions")
         return False
 
