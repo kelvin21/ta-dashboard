@@ -559,9 +559,9 @@ def style_macd_by_trend(val, trend):
     }
     return colors.get(prefix, "")
 
-def plot_multi_tf_macd(ticker, start_date, end_date, lookback, db_path=DB_PATH):
+def plot_multi_tf_macd(ticker, start_date, end_date, lookback):
     """Plot candlestick + MACD histograms for daily/weekly/monthly in subplots."""
-    df = load_price_range(ticker, start_date, end_date, db_path=db_path)
+    df = load_price_range(ticker, start_date, end_date)  # Remove db_path parameter
     if df.empty:
         st.warning(f"No data for {ticker}")
         return
