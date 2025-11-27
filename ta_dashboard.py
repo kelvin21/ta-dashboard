@@ -26,7 +26,7 @@ if SCRIPT_DIR not in sys.path:
 # Debug: Show what environment variables we have
 print(f"🔍 Environment check:")
 print(f"  USE_MONGODB: {os.getenv('USE_MONGODB', 'not set')}")
-print(f"  MONGODB_URI: {'set' if os.getenv('MONGODB_URI') else 'not set'}")
+print(f"  MONGODB_URI: {os.getenv('MONGODB_URI') if os.getenv('MONGODB_URI') else 'not set'}")
 print(f"  MONGODB_DB_NAME: {os.getenv('MONGODB_DB_NAME', 'not set')}")
 
 # Auto-initialize database if it doesn't exist
@@ -359,7 +359,7 @@ def build_overview(tickers, start_date, end_date, lookback=20, max_rows=200):
             histW_val = float(histW.iat[-1]) if not histW.empty and not pd.isna(histW.iat[-1]) else np.nan
         
         # Pre-calculate monthly resampling on FULL dataset (don't clip yet)
-        df_m_full = df.set_index('date').resample('M').agg({
+        df_m_full = df.set_index('date').resample('ME').agg({
             'open':'first',
             'high':'max',
             'low':'min',

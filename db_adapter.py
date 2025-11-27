@@ -7,18 +7,40 @@ import pandas as pd
 from datetime import datetime
 from typing import List, Dict, Optional, Tuple
 import sqlite3
+from pathlib import Path
 
 # Load .env file FIRST before checking environment variables
+# Explicitly specify the .env file path
 try:
     from dotenv import load_dotenv
-    load_dotenv()
-    print("✓ Loaded .env file in db_adapter")
+    
+    # Get the directory where this script is located
+    SCRIPT_DIR = Path(__file__).parent
+    ENV_PATH = SCRIPT_DIR / '.env'
+    
+    print(f"🔍 Looking for .env at: {ENV_PATH}")
+    print(f"🔍 .env exists: {ENV_PATH.exists()}")
+    
+    # Load .env from the script directory
+    loaded = load_dotenv(dotenv_path=ENV_PATH, verbose=True)
+    print(f"✓ load_dotenv() result: {loaded}")
+    
+    # Verify what was loaded
+    print(f"✓ After load_dotenv():")
+    print(f"  USE_MONGODB: {os.getenv('USE_MONGODB', 'NOT SET')}")
+    mongodb_uri = os.getenv('MONGODB_URI', '')
+    if mongodb_uri:
+        print(f"  MONGODB_URI: SET (length: {len(mongodb_uri)})")
+    else:
+        print(f"  MONGODB_URI: NOT SET")
+    print(f"  MONGODB_DB_NAME: {os.getenv('MONGODB_DB_NAME', 'NOT SET')}")
+    
 except ImportError:
     print("⚠️ python-dotenv not installed - using system environment only")
 
 # HARDCODED CONNECTION STRING (Optional - only if .env doesn't work)
 # Uncomment and set your MongoDB URI here if environment variables aren't loading
-HARDCODED_MONGODB_URI = None
+HARDCODED_MONGODB_URI = "mongodb+srv://longhalucky2111_db_user:abc123abc@cluster0.g4ndhy9.mongodb.net/?appName=Cluster0"
 
 # Try to import MongoDB
 try:
@@ -43,10 +65,16 @@ class DatabaseAdapter:
         """
         # Auto-detect database type from environment
         if db_type is None:
-            if os.getenv("USE_MONGODB", "false").lower() == "true":
+            use_mongo_env = os.getenv("USE_MONGODB", "false").lower()
+            print(f"🔍 DatabaseAdapter init:")
+            print(f"  USE_MONGODB from env: '{use_mongo_env}'")
+            
+            if use_mongo_env == "true":
                 db_type = "mongodb"
             else:
                 db_type = "sqlite"
+            
+            print(f"  Selected db_type: {db_type}")
         
         self.db_type = db_type
         
@@ -59,14 +87,32 @@ class DatabaseAdapter:
             mongo_uri = connection_string or HARDCODED_MONGODB_URI or os.getenv("MONGODB_URI")
             
             # Debug output
-            print(f"🔍 Debug MongoDB URI Loading:")
-            print(f"  USE_MONGODB env var: {os.getenv('USE_MONGODB')}")
-            print(f"  MONGODB_URI env var: {'Set (length: ' + str(len(os.getenv('MONGODB_URI', ''))) + ')' if os.getenv('MONGODB_URI') else 'Not set'}")
+            print(f"\n🔍 MongoDB Connection Debug:")
+            print(f"  connection_string param: {'Set' if connection_string else 'Not set'}")
             print(f"  HARDCODED_MONGODB_URI: {'Set' if HARDCODED_MONGODB_URI else 'Not set'}")
-            print(f"  Final URI to use: {'Set (length: ' + str(len(mongo_uri)) + ')' if mongo_uri else 'Not set'}")
+            
+            uri_from_env = os.getenv("MONGODB_URI")
+            if uri_from_env:
+                print(f"  MONGODB_URI from os.getenv(): SET (length: {len(uri_from_env)})")
+                # Show first and last 20 chars for verification
+                if len(uri_from_env) > 40:
+                    print(f"  URI preview: {uri_from_env[:20]}...{uri_from_env[-20:]}")
+            else:
+                print(f"  MONGODB_URI from os.getenv(): NOT SET")
+            
+            if mongo_uri:
+                print(f"  Final URI to use: SET (length: {len(mongo_uri)})")
+            else:
+                print(f"  Final URI to use: NOT SET")
             
             if not mongo_uri:
-                raise ValueError("MongoDB URI not found! Set MONGODB_URI environment variable or hardcode HARDCODED_MONGODB_URI")
+                raise ValueError(
+                    "MongoDB URI not found!\n"
+                    "Solutions:\n"
+                    "1. Set MONGODB_URI in .env file\n"
+                    "2. Set HARDCODED_MONGODB_URI in db_adapter.py\n"
+                    "3. Pass connection_string to DatabaseAdapter()"
+                )
             
             # Debug: Log which URI source is being used
             if connection_string:
@@ -74,7 +120,7 @@ class DatabaseAdapter:
             elif HARDCODED_MONGODB_URI:
                 print("✓ Using HARDCODED MongoDB URI from db_adapter.py")
             else:
-                print("✓ Using MongoDB URI from environment variable")
+                print("✓ Using MongoDB URI from environment variable (.env file)")
             
             try:
                 # Create client with ServerApi (MongoDB 4.0+ format)
@@ -100,6 +146,7 @@ class DatabaseAdapter:
                 raise ConnectionError(f"MongoDB connection failed: {e}")
         
         else:
+            print(f"✓ Using SQLite mode")
             # SQLite setup
             self.db_path = connection_string or os.getenv(
                 "PRICE_DB_PATH",
