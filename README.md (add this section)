@@ -1,0 +1,72 @@
+## ☁️ Cloud Deployment with MongoDB
+
+For production deployment, you can use MongoDB Atlas (free tier available) instead of SQLite.
+
+### Setup MongoDB Atlas
+
+1. **Create free MongoDB Atlas account**: https://www.mongodb.com/cloud/atlas/register
+2. **Create a cluster** (M0 Free tier is sufficient)
+3. **Get connection string**:
+   - Click "Connect" → "Connect your application"
+   - Copy the connection string
+   - Replace `<password>` with your password
+
+### Migration Steps
+
+1. **Install MongoDB dependencies**:
+```bash
+pip install pymongo dnspython
+```
+
+2. **Set environment variables**:
+```bash
+export MONGODB_URI="mongodb+srv://username:password@cluster.mongodb.net/?retryWrites=true&w=majority"
+export USE_MONGODB=true
+```
+
+3. **Migrate existing SQLite data**:
+```bash
+python mongodb_migration.py
+```
+
+4. **Run with MongoDB**:
+```bash
+streamlit run ta_dashboard.py
+```
+
+### Environment Configuration
+
+**Local Development (SQLite)**:
+```bash
+USE_MONGODB=false
+PRICE_DB_PATH=price_data.db
+```
+
+**Production (MongoDB)**:
+```bash
+USE_MONGODB=true
+MONGODB_URI=mongodb+srv://...
+MONGODB_DB_NAME=macd_reversal
+```
+
+### Deploy to Streamlit Cloud
+
+1. Push code to GitHub
+2. Go to https://share.streamlit.io
+3. Connect your GitHub repo
+4. Add secrets in Streamlit Cloud dashboard:
+   ```
+   USE_MONGODB = "true"
+   MONGODB_URI = "mongodb+srv://..."
+   ```
+
+### MongoDB vs SQLite Comparison
+
+| Feature | SQLite | MongoDB |
+|---------|--------|---------|
+| **Best for** | Local development | Cloud deployment |
+| **Concurrent users** | Limited | Unlimited |
+| **Data size** | < 100MB | Unlimited (free tier: 512MB) |
+| **Backup** | File copy | Automatic |
+| **Cost** | Free | Free tier available |
+| **Setup** | None | 5 minutes |

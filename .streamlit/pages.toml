@@ -1,0 +1,20 @@
+# Control which pages are visible in deployment
+# Set 'hidden = true' to hide a page
+
+[[pages]]
+path = "ta_dashboard.py"
+name = "MACD Overview"
+icon = "📈"
+hidden = false
+
+[[pages]]
+path = "pages/1_📊_Market_Breadth.py"
+name = "Market Breadth"
+icon = "📊"
+hidden = false  # Set to true to hide in production
+
+[[pages]]
+path = "pages/2_🎯_Market_Forecast.py"
+name = "Market Forecast"
+icon = "🎯"
+hidden = false  # Set to true to hide in production

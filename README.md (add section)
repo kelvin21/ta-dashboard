@@ -1,0 +1,24 @@
+## 📦 Installation Options
+
+### Standard Installation (SQLite only)
+```bash
+pip install -r requirements.txt
+```
+
+### With MongoDB Support (for cloud deployment)
+```bash
+pip install -r requirements.txt
+pip install pymongo dnspython
+```
+
+Or create `requirements-mongodb.txt`:
+```txt
+-r requirements.txt
+pymongo>=4.6.0
+dnspython>=2.4.0
+```
+
+Then install:
+```bash
+pip install -r requirements-mongodb.txt
+```

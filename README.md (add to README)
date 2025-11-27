@@ -1,0 +1,24 @@
+## 📊 Database Setup
+
+The database is **not included** in this repository. You have three options:
+
+### Option 1: Create Empty Database
+```bash
+python init_database.py
+```
+Then add tickers and fetch data using the dashboard.
+
+### Option 2: Import Sample Data
+If someone shared CSV exports with you:
+```bash
+python export_database.py import
+```
+
+### Option 3: Fetch Your Own Data
+1. Run the dashboard: `streamlit run ta_dashboard.py`
+2. Add tickers using "Admin: Manage Tickers"
+3. Use "TCBS Historical Refresh" to fetch data
+4. Use "Intraday Update" for today's data
+
+## 🔐 Security Note
+Never commit `.db` files to GitHub if they contain sensitive data!
