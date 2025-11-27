@@ -8,9 +8,23 @@ from datetime import datetime
 from typing import List, Dict, Optional, Tuple
 import sqlite3
 
+# Load .env file FIRST before checking environment variables
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+    print("✓ Loaded .env file in db_adapter")
+except ImportError:
+    print("⚠️ python-dotenv not installed - using system environment only")
+
+# HARDCODED CONNECTION STRING (Optional - only if .env doesn't work)
+# Uncomment and set your MongoDB URI here if environment variables aren't loading
+HARDCODED_MONGODB_URI = None
+
 # Try to import MongoDB
 try:
-    from pymongo import MongoClient, ASCENDING, DESCENDING
+    from pymongo.mongo_client import MongoClient
+    from pymongo.server_api import ServerApi
+    from pymongo import ASCENDING, DESCENDING
     from pymongo.errors import ConnectionFailure, DuplicateKeyError
     HAS_MONGO = True
 except ImportError:
@@ -38,25 +52,53 @@ class DatabaseAdapter:
         
         if db_type == "mongodb":
             if not HAS_MONGO:
-                raise ImportError("pymongo not installed. Run: pip install pymongo")
+                raise ImportError("pymongo not installed. Run: pip install pymongo dnspython")
             
-            # MongoDB setup
-            mongo_uri = connection_string or os.getenv(
-                "MONGODB_URI",
-                "mongodb://localhost:27017/"
-            )
-            self.client = MongoClient(mongo_uri)
-            db_name = os.getenv("MONGODB_DB_NAME", "macd_reversal")
-            self.db = self.client[db_name]
+            # MongoDB setup with ServerApi
+            # Priority: 1) connection_string parameter, 2) hardcoded, 3) environment variable
+            mongo_uri = connection_string or HARDCODED_MONGODB_URI or os.getenv("MONGODB_URI")
             
-            # Collections
-            self.price_data = self.db.price_data
-            self.market_data = self.db.market_data
-            self.tcbs_scaling = self.db.tcbs_scaling
+            # Debug output
+            print(f"🔍 Debug MongoDB URI Loading:")
+            print(f"  USE_MONGODB env var: {os.getenv('USE_MONGODB')}")
+            print(f"  MONGODB_URI env var: {'Set (length: ' + str(len(os.getenv('MONGODB_URI', ''))) + ')' if os.getenv('MONGODB_URI') else 'Not set'}")
+            print(f"  HARDCODED_MONGODB_URI: {'Set' if HARDCODED_MONGODB_URI else 'Not set'}")
+            print(f"  Final URI to use: {'Set (length: ' + str(len(mongo_uri)) + ')' if mongo_uri else 'Not set'}")
             
-            # Create indexes
-            self._create_mongo_indexes()
+            if not mongo_uri:
+                raise ValueError("MongoDB URI not found! Set MONGODB_URI environment variable or hardcode HARDCODED_MONGODB_URI")
             
+            # Debug: Log which URI source is being used
+            if connection_string:
+                print("✓ Using MongoDB URI from function parameter")
+            elif HARDCODED_MONGODB_URI:
+                print("✓ Using HARDCODED MongoDB URI from db_adapter.py")
+            else:
+                print("✓ Using MongoDB URI from environment variable")
+            
+            try:
+                # Create client with ServerApi (MongoDB 4.0+ format)
+                self.client = MongoClient(mongo_uri, server_api=ServerApi('1'))
+                
+                # Test connection
+                self.client.admin.command('ping')
+                print("✅ MongoDB connection successful!")
+                
+                db_name = os.getenv("MONGODB_DB_NAME", "macd_reversal")
+                self.db = self.client[db_name]
+                
+                # Collections
+                self.price_data = self.db.price_data
+                self.market_data = self.db.market_data
+                self.tcbs_scaling = self.db.tcbs_scaling
+                
+                # Create indexes
+                self._create_mongo_indexes()
+                
+            except Exception as e:
+                print(f"❌ MongoDB connection failed: {e}")
+                raise ConnectionError(f"MongoDB connection failed: {e}")
+        
         else:
             # SQLite setup
             self.db_path = connection_string or os.getenv(

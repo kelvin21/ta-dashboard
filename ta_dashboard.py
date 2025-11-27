@@ -10,15 +10,30 @@ import os
 import asyncio
 import sys
 
+# Load .env file FIRST before any other imports
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+    print("✓ Loaded .env file in ta_dashboard")
+except ImportError:
+    print("⚠️ python-dotenv not installed")
+
 # Add the script directory to Python path
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 if SCRIPT_DIR not in sys.path:
     sys.path.insert(0, SCRIPT_DIR)
 
+# Debug: Show what environment variables we have
+print(f"🔍 Environment check:")
+print(f"  USE_MONGODB: {os.getenv('USE_MONGODB', 'not set')}")
+print(f"  MONGODB_URI: {'set' if os.getenv('MONGODB_URI') else 'not set'}")
+print(f"  MONGODB_DB_NAME: {os.getenv('MONGODB_DB_NAME', 'not set')}")
+
 # Auto-initialize database if it doesn't exist
 try:
     from init_database import create_empty_database
     DB_PATH_CHECK = os.getenv("PRICE_DB_PATH", os.path.join(SCRIPT_DIR, "price_data.db"))
+    print(f"🔍 Checking database at: {DB_PATH_CHECK}")
     if not os.path.exists(DB_PATH_CHECK):
         create_empty_database(DB_PATH_CHECK)
 except Exception as e:
