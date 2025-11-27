@@ -5,6 +5,7 @@ Run this once when switching from local SQLite to cloud MongoDB.
 Requirements: pip install pymongo dnspython
 """
 import os
+import sys  # Add this import
 import sqlite3
 from datetime import datetime
 import pandas as pd
