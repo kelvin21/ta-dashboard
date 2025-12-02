@@ -14,7 +14,6 @@ import sys
 try:
     from dotenv import load_dotenv
     load_dotenv()
-    print("✓ Loaded .env file in ta_dashboard")
 except ImportError:
     print("⚠️ python-dotenv not installed")
 
@@ -23,16 +22,16 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 if SCRIPT_DIR not in sys.path:
     sys.path.insert(0, SCRIPT_DIR)
 
-# Debug: Show what environment variables we have
-print(f"🔍 Environment check:")
-print(f"  USE_MONGODB: {os.getenv('USE_MONGODB', 'not set')}")
-print(f"  MONGODB_URI: {os.getenv('MONGODB_URI') if os.getenv('MONGODB_URI') else 'not set'}")
-print(f"  MONGODB_DB_NAME: {os.getenv('MONGODB_DB_NAME', 'not set')}")
+# Fix: Ensure DB_PATH is set correctly and used everywhere
+# Set DB_PATH at the top after loading .env and checking for build_price_db
+DB_PATH = os.getenv("PRICE_DB_PATH", os.path.join(SCRIPT_DIR, "price_data.db"))
+DEFAULT_LOCAL_DB = os.getenv("REF_DB_PATH", os.path.join(SCRIPT_DIR, "analysis_results.db"))
 
 # Auto-initialize database if it doesn't exist
 try:
     from init_database import create_empty_database
     DB_PATH_CHECK = os.getenv("PRICE_DB_PATH", os.path.join(SCRIPT_DIR, "price_data.db"))
+    DB_PATH_CHECK = "price_data.db"
     print(f"🔍 Checking database at: {DB_PATH_CHECK}")
     if not os.path.exists(DB_PATH_CHECK):
         create_empty_database(DB_PATH_CHECK)
@@ -99,7 +98,7 @@ if 'selected_ticker' not in st.session_state:
     st.session_state.selected_ticker = None
 
 # Export commonly used functions - updated to use db_adapter
-@st.cache_data(ttl=int(os.getenv("CACHE_TTL", "300")))
+@st.cache_resource(ttl=int(os.getenv("CACHE_TTL", "1800")))
 def get_all_tickers(debug=False):
     if HAS_DB_ADAPTER:
         try:
@@ -131,38 +130,124 @@ def get_all_tickers(debug=False):
             st.write(f"[DEBUG] Fallback ticker query error: {e}")
         return []
 
-@st.cache_data(ttl=int(os.getenv("CACHE_TTL", "300")))
+@st.cache_resource(ttl=int(os.getenv("CACHE_TTL", "1800")))
 def load_price_range(ticker, start_date, end_date):
+    """
+    Load price data for a single ticker within a date range.
+    """
     if HAS_DB_ADAPTER:
         try:
             start_str = start_date if isinstance(start_date, str) else start_date.strftime("%Y-%m-%d")
             end_str = end_date if isinstance(end_date, str) else end_date.strftime("%Y-%m-%d")
-            return db.load_price_range(ticker, start_str, end_str)
+            df = db.load_price_range(ticker, start_str, end_str)
+            if not df.empty:
+                df = df.sort_values('date', ascending=False)  # Sort by date in descending order
+            return df
         except Exception as e:
-            st.error(f"Database error: {e}")
+            st.error(f"Database adapter error: {e}")
             return pd.DataFrame()
     
     # Fallback to legacy SQLite
     if not os.path.exists(DB_PATH):
+        st.warning(f"Database file not found: {DB_PATH}")
         return pd.DataFrame()
+    
     conn = sqlite3.connect(DB_PATH)
     try:
         start_str = start_date if isinstance(start_date, str) else start_date.strftime("%Y-%m-%d")
         end_str = end_date if isinstance(end_date, str) else end_date.strftime("%Y-%m-%d")
         
-        q = """
+        query = """
             SELECT date, open, high, low, close, volume
             FROM price_data
-            WHERE ticker = ? AND date >= ? AND date <= ?
-            ORDER BY date
+            WHERE ticker = ? AND date BETWEEN ? AND ?
+            ORDER BY date DESC
         """
-        df = pd.read_sql_query(q, conn, params=(ticker, start_str, end_str))
-        if df.empty:
-            return df
-        df['date'] = pd.to_datetime(df['date'])
+        df = pd.read_sql_query(query, conn, params=(ticker, start_str, end_str))
+        if not df.empty:
+            df['date'] = pd.to_datetime(df['date'])  # Ensure 'date' is in datetime format
         return df
+    except Exception as e:
+        st.error(f"SQLite query error: {e}")
+        return pd.DataFrame()
     finally:
         conn.close()
+
+@st.cache_resource(ttl=int(os.getenv("CACHE_TTL", "1800")))
+def load_price_range_multi(tickers, start_date, end_date, debug=False):
+    """
+    Load price data for multiple tickers at once.
+    Returns a dict: {ticker: DataFrame}
+    """
+    if debug:
+        st.write(f"[DEBUG] load_price_range_multi: tickers={tickers}, start_date={start_date}, end_date={end_date}")
+    result = {}
+
+    # Ensure tickers is a list and not empty
+    if not isinstance(tickers, list) or not tickers:
+        if debug:
+            st.write("[DEBUG] load_price_range_multi: No tickers provided.")
+        return {t: pd.DataFrame() for t in tickers}
+
+    # Use DB adapter if available
+    if HAS_DB_ADAPTER and hasattr(db, "load_price_range_multi"):
+        try:
+            start_str = start_date if isinstance(start_date, str) else start_date.strftime("%Y-%m-%d")
+            end_str = end_date if isinstance(end_date, str) else end_date.strftime("%Y-%m-%d")
+            
+            # Split tickers into batches
+            batch_size = int(os.getenv("BATCH_SIZE", 20))  # Default batch size is 50
+            for i in range(0, len(tickers), batch_size):
+                batch = tickers[i:i + batch_size]
+                if debug:
+                    st.write(f"[DEBUG] Querying batch: {batch}")
+                batch_result = db.load_price_range_multi(batch, start_str, end_str)
+                result.update(batch_result)
+                if debug:
+                    st.write(f"[DEBUG] Batch result: {len(batch_result)} tickers loaded.")
+            
+            if debug:
+                for t in tickers:
+                    df = result.get(t, pd.DataFrame())
+                    if not df.empty:
+                        result[t] = df.sort_values('date', ascending=True)  # Sort by date in ascending order
+                        st.write(f"[DEBUG] DB-adapter {t}: rows={len(df)}")
+            return result
+        except Exception as e:
+            st.error(f"[DEBUG] Database adapter error: {e}")
+            return {t: pd.DataFrame() for t in tickers}
+
+    # Fallback: sequentially call load_price_range
+    for t in tickers:
+        try:
+            df = load_price_range(t, start_date, end_date)
+            if not df.empty:
+                result[t] = df.sort_values('date', ascending=True)  # Sort by date in ascending order
+            if debug:
+                st.write(f"[DEBUG] Fallback {t}: rows={len(df)}")
+        except Exception as e:
+            if debug:
+                st.write(f"[DEBUG] Error loading data for {t}: {e}")
+            result[t] = pd.DataFrame()
+
+    # Extra debug: show summary if all are empty
+    if debug and all(df.empty for df in result.values()):
+        st.write("[DEBUG] load_price_range_multi: All tickers returned empty DataFrames.")
+        st.write(f"[DEBUG] DB_PATH: {DB_PATH}")
+        try:
+            conn = sqlite3.connect(DB_PATH)
+            cur = conn.cursor()
+            cur.execute("SELECT MIN(date), MAX(date) FROM price_data")
+            minmax = cur.fetchone()
+            st.write(f"[DEBUG] price_data date range in DB: {minmax}")
+            cur.execute("SELECT COUNT(*) FROM price_data")
+            total_rows = cur.fetchone()[0]
+            st.write(f"[DEBUG] price_data total rows: {total_rows}")
+            conn.close()
+        except Exception as e:
+            st.write(f"[DEBUG] Error querying DB for min/max date: {e}")
+
+    return result
 
 def macd_hist(close, fast=12, slow=26, signal=9):
     """
@@ -256,214 +341,245 @@ def stage_score(stage):
         return -1
     return 0
 
-def build_overview(tickers, start_date, end_date, lookback=20, max_rows=200):
-    rows = []
-    skipped = 0
+def _overview_row(t, df, lookback, debug):
+    # df is already loaded for ticker t
+    if df.empty:
+        return None
+
+    latest = df.iloc[-1]
+    close = float(latest['close'])
+    latest_date = latest['date']  # Extract the latest bar date
     
-    # Get current time for volume adjustment
+    current_vol = float(latest['volume'])
+    close_series = df['close'].astype(float)
+
+    _, _, histD = macd_hist(close_series)
+    stageD = detect_stage(histD, lookback=lookback)
+    histD_val = float(histD.iat[-1]) if not histD.empty and not pd.isna(histD.iat[-1]) else np.nan
+
+    signal_note = ""
+    if len(histD) >= 5:
+        recent_hist = histD.tail(5).dropna()
+        if len(recent_hist) >= 2:
+            current = recent_hist.iloc[-1]
+            prev = recent_hist.iloc[-2]
+            momentum = current - prev
+            cross_up = (prev < 0 and current >= 0)
+            cross_down = (prev > 0 and current <= 0)
+            if cross_up:
+                signal_note = "↗0d"
+            elif cross_down:
+                signal_note = "↘0d"
+            elif current < 0 and momentum > 0:
+                days_to_cross = abs(current / momentum) if momentum > 0 else 999
+                if days_to_cross <= 5 and days_to_cross >= 1:
+                    signal_note = f"↗{int(days_to_cross)}d"
+            elif current > 0 and momentum < 0:
+                days_to_cross = abs(current / momentum) if momentum < 0 else 999
+                if days_to_cross <= 5 and days_to_cross >= 1:
+                    signal_note = f"↘{int(days_to_cross)}d"
+
+    df_w_full = df.set_index('date').resample('W').agg({
+        'open':'first',
+        'high':'max',
+        'low':'min',
+        'close':'last',
+        'volume':'sum'
+    }).dropna(subset=['close'])
+
+    if df_w_full.empty or len(df_w_full) < 3:
+        stageW = "N/A"
+        histW_val = np.nan
+        if debug and len(df_w_full) > 0:
+            st.write(f"[{t}] Weekly: {len(df_w_full)} weeks - insufficient")
+    else:
+        close_w = df_w_full['close'].astype(float)
+        _, _, histW = macd_hist(close_w)
+        stageW = detect_stage(histW, lookback=lookback)
+        histW_val = float(histW.iat[-1]) if not histW.empty and not pd.isna(histW.iat[-1]) else np.nan
+
+    df_m_full = df.set_index('date').resample('M').agg({
+        'open':'first',
+        'high':'max',
+        'low':'min',
+        'close':'last',
+        'volume':'sum'
+    }).dropna(subset=['close'])
+
+    if df_m_full.empty or len(df_m_full) < 3:
+        stageM = "N/A"
+        histM_val = np.nan
+        if debug:
+            st.write(f"[{t}] Monthly: {len(df_m_full)} months - insufficient (need 3+)")
+    else:
+        close_m = df_m_full['close'].astype(float)
+        _, _, histM = macd_hist(close_m)
+        if histM.empty or pd.isna(histM.iat[-1]):
+            stageM = "N/A"
+            histM_val = np.nan
+            if debug:
+                st.write(f"[{t}] Monthly: {len(df_m_full)} months - MACD returned NaN")
+        else:
+            stageM = detect_stage(histM, lookback=lookback)
+            histM_val = float(histM.iat[-1])
+            if debug:
+                st.write(f"[{t}] Monthly: {len(df_m_full)} months - MACD hist = {histM_val:.2f}, stage = {stageM}")
+
+    df_hist = df[df['date'] < latest_date]
+    if len(df_hist) >= 20:
+        avg_vol = float(df_hist['volume'].tail(20).mean())
+    elif len(df_hist) > 0:
+        avg_vol = float(df_hist['volume'].mean())
+    else:
+        avg_vol = current_vol
+
+    is_today = latest_date.date() == datetime.now().date()
     now = datetime.now()
     current_time = now.time()
-    
-    # Trading hours: 9:00-11:30 and 13:00-14:45
     morning_start = datetime.strptime("09:00", "%H:%M").time()
     morning_end = datetime.strptime("11:30", "%H:%M").time()
     afternoon_start = datetime.strptime("13:00", "%H:%M").time()
     afternoon_end = datetime.strptime("14:45", "%H:%M").time()
-    
-    # Calculate elapsed trading minutes today
     elapsed_trading_minutes = 0
     if morning_start <= current_time <= morning_end:
-        # Currently in morning session
         elapsed_trading_minutes = (datetime.combine(datetime.today(), current_time) - datetime.combine(datetime.today(), morning_start)).seconds / 60
     elif afternoon_start <= current_time <= afternoon_end:
-        # Currently in afternoon session (morning session complete + partial afternoon)
-        morning_minutes = 150  # 09:00 to 11:30 = 2.5 hours
+        morning_minutes = 150
         elapsed_afternoon = (datetime.combine(datetime.today(), current_time) - datetime.combine(datetime.today(), afternoon_start)).seconds / 60
         elapsed_trading_minutes = morning_minutes + elapsed_afternoon
     elif current_time > afternoon_end:
-        # Market closed - full day
-        elapsed_trading_minutes = 255  # 150 morning + 105 afternoon (13:00-14:45)
-    # else: before market open, elapsed_trading_minutes = 0
-    
-    total_trading_minutes = 255  # Full trading day
+        elapsed_trading_minutes = 255
+    total_trading_minutes = 255
     time_factor = elapsed_trading_minutes / total_trading_minutes if total_trading_minutes > 0 else 1.0
-    
+
+    if is_today and time_factor > 0 and time_factor < 1.0:
+        adjusted_current_vol = current_vol / time_factor
+    else:
+        adjusted_current_vol = current_vol
+
+    vol_ratio = adjusted_current_vol / avg_vol if avg_vol > 0 else 1.0
+
+    score = 0.5*stage_score(stageD) + 0.3*stage_score(stageW) + 0.2*stage_score(stageM)
+    return {
+        "Ticker": t,
+        "Close": f"{close:.1f}",
+        "Latest Date": latest_date.strftime("%Y-%m-%d"),  # Add the latest bar date
+        "Trend (Daily)": stageD,
+        "Trend (Weekly)": stageW,
+        "Trend (Monthly)": stageM,
+        "Score": int(np.round(score)),
+        "MACD_Hist_Daily": f"{histD_val:.2f}" if not np.isnan(histD_val) else "",
+        "MACD_Hist_Weekly": f"{histW_val:.2f}" if not np.isnan(histW_val) else "",
+        "MACD_Hist_Monthly": f"{histM_val:.2f}" if not np.isnan(histM_val) else "",
+        "Vol/AvgVol": f"{vol_ratio:.1f}x",
+        "Signal": signal_note
+    }
+
+# Update build_overview to use the synchronous _overview_row
+def build_overview(tickers, start_date, end_date, lookback=20, max_rows=200, debug=True):
+    """
+    Build an overview of tickers with MACD analysis for daily, weekly, and monthly timeframes.
+    """
+    if debug:
+        st.write("[DEBUG] build_overview: Function called.")
+        st.write(f"[DEBUG] Parameters: tickers={tickers}, start_date={start_date}, end_date={end_date}, lookback={lookback}, max_rows={max_rows}")
+
+    rows = []
+
+    # Defensive: ensure tickers is a list and not empty
+    if not isinstance(tickers, list):
+        try:
+            tickers = list(tickers)
+        except Exception:
+            tickers = []
+    if debug:
+        st.write(f"[DEBUG] build_overview: tickers after conversion={tickers}")
+
+    if not tickers:
+        st.write("[DEBUG] build_overview: No tickers provided.")
+        return pd.DataFrame()
+
+    # Load price data for all tickers
+    if debug:
+        st.write("[DEBUG] Loading price data for tickers...")
+    df_map = load_price_range_multi(tickers[:max_rows], start_date, end_date, debug=debug)
+    if debug:
+        st.write(f"[DEBUG] Loaded price data for {len(df_map)} tickers.")
+
+    # Process each ticker
     for t in tickers[:max_rows]:
-        # Load FULL price range WITHOUT clipping - we need all historical data for MACD
-        df = load_price_range(t, start_date, end_date)
+        if debug:
+            st.write(f"[DEBUG] Processing ticker: {t}")
+        df = df_map.get(t, pd.DataFrame())
         if df.empty:
-            skipped += 1
-            continue
-        
-        # Get latest row from the loaded data
-        latest = df.iloc[-1]
-        close = float(latest['close'])
-        latest_date = latest['date']
-        current_vol = float(latest['volume'])
-        
-        # Pre-convert close to float once for all calculations
-        close_series = df['close'].astype(float)
-        
-        # Daily MACD - calculate on full dataset
-        _, _, histD = macd_hist(close_series)
-        stageD = detect_stage(histD, lookback=lookback)
-        histD_val = float(histD.iat[-1]) if not histD.empty and not pd.isna(histD.iat[-1]) else np.nan
-        
-        # Calculate MACD momentum for crossover prediction
-        signal_note = ""
-        if len(histD) >= 5:
-            recent_hist = histD.tail(5).dropna()
-            if len(recent_hist) >= 2:
-                current = recent_hist.iloc[-1]
-                prev = recent_hist.iloc[-2]
-                momentum = current - prev
-                
-                # Check for actual crossovers first (matches detect_stage logic)
-                cross_up = (prev < 0 and current >= 0)
-                cross_down = (prev > 0 and current <= 0)
-                
-                if cross_up:
-                    signal_note = "↗0d"  # Just crossed up (Confirmed Trough)
-                elif cross_down:
-                    signal_note = "↘0d"  # Just crossed down (Confirmed Peak)
-                elif current < 0 and momentum > 0:
-                    # Below zero, moving up (Troughing)
-                    days_to_cross = abs(current / momentum) if momentum > 0 else 999
-                    if days_to_cross <= 5 and days_to_cross >= 1:
-                        signal_note = f"↗{int(days_to_cross)}d"
-                elif current > 0 and momentum < 0:
-                    # Above zero, moving down (Peaking)
-                    days_to_cross = abs(current / momentum) if momentum < 0 else 999
-                    if days_to_cross <= 5 and days_to_cross >= 1:
-                        signal_note = f"↘{int(days_to_cross)}d"
-        
-        # Pre-calculate weekly resampling on FULL dataset (don't clip yet)
-        df_w_full = df.set_index('date').resample('W').agg({
-            'open':'first',
-            'high':'max',
-            'low':'min',
-            'close':'last',
-            'volume':'sum'
-        }).dropna(subset=['close'])
-        
-        # Weekly MACD - calculate on full resampled data
-        if df_w_full.empty or len(df_w_full) < 3:
-            stageW = "N/A"
-            histW_val = np.nan
-            if debug and len(df_w_full) > 0:
-                st.write(f"[{t}] Weekly: {len(df_w_full)} weeks - insufficient")
-        else:
-            close_w = df_w_full['close'].astype(float)
-            _, _, histW = macd_hist(close_w)
-            stageW = detect_stage(histW, lookback=lookback)
-            histW_val = float(histW.iat[-1]) if not histW.empty and not pd.isna(histW.iat[-1]) else np.nan
-        
-        # Pre-calculate monthly resampling on FULL dataset (don't clip yet)
-        df_m_full = df.set_index('date').resample('M').agg({  # ✅ Use 'M' for compatibility
-            'open':'first',
-            'high':'max',
-            'low':'min',
-            'close':'last',
-            'volume':'sum'
-        }).dropna(subset=['close'])
-        
-        # Monthly MACD - calculate on full resampled data
-        if df_m_full.empty or len(df_m_full) < 3:
-            stageM = "N/A"
-            histM_val = np.nan
             if debug:
-                st.write(f"[{t}] Monthly: {len(df_m_full)} months - insufficient (need 3+)")
-        else:
-            close_m = df_m_full['close'].astype(float)
-            _, _, histM = macd_hist(close_m)
-            
-            # Check if MACD calculation produced valid results
-            if histM.empty or pd.isna(histM.iat[-1]):
-                stageM = "N/A"
-                histM_val = np.nan
+                st.write(f"[DEBUG] {t}: No data available for this ticker.")
+            continue
+
+        try:
+            # Generate the overview row for the ticker
+            if debug:
+                st.write(f"[DEBUG] Generating overview row for {t}...")
+            row = _overview_row(t, df, lookback, debug)
+            if row:
+                rows.append(row)
                 if debug:
-                    st.write(f"[{t}] Monthly: {len(df_m_full)} months - MACD returned NaN")
+                    st.write(f"[DEBUG] Successfully generated row for {t}: {row}")
             else:
-                stageM = detect_stage(histM, lookback=lookback)
-                histM_val = float(histM.iat[-1])
                 if debug:
-                    st.write(f"[{t}] Monthly: {len(df_m_full)} months - MACD hist = {histM_val:.2f}, stage = {stageM}")
-        
-        # AvgVol (daily lookback, excluding today) and calculate ratio
-        df_hist = df[df['date'] < latest_date]  # exclude today
-        if len(df_hist) >= 20:
-            avg_vol = float(df_hist['volume'].tail(20).mean())
-        elif len(df_hist) > 0:
-            avg_vol = float(df_hist['volume'].mean())
-        else:
-            avg_vol = current_vol  # fallback
-        
-        # Adjust current volume by time factor ONLY if viewing today's data during market hours
-        is_today = latest_date.date() == datetime.now().date()
-        
-        if is_today and time_factor > 0 and time_factor < 1.0:
-            # During market hours - adjust today's volume for partial day
-            adjusted_current_vol = current_vol / time_factor
-        else:
-            # After market close or historical data - no adjustment needed
-            adjusted_current_vol = current_vol
-        
-        vol_ratio = adjusted_current_vol / avg_vol if avg_vol > 0 else 1.0
-        
-        score = 0.5*stage_score(stageD) + 0.3*stage_score(stageW) + 0.2*stage_score(stageM)
-        rows.append({
-            "Ticker": t,
-            "Close": f"{close:.1f}",
-            "Trend (Daily)": stageD,
-            "Trend (Weekly)": stageW,
-            "Trend (Monthly)": stageM,
-            "Score": int(np.round(score)),
-            "MACD_Hist_Daily": f"{histD_val:.2f}" if not np.isnan(histD_val) else "",
-            "MACD_Hist_Weekly": f"{histW_val:.2f}" if not np.isnan(histW_val) else "",
-            "MACD_Hist_Monthly": f"{histM_val:.2f}" if not np.isnan(histM_val) else "",
-            "Vol/AvgVol": f"{vol_ratio:.1f}x",
-            "Signal": signal_note
-        })
+                    st.write(f"[DEBUG] No row generated for {t}.")
+        except Exception as e:
+            if debug:
+                st.write(f"[DEBUG] Error building overview row for {t}: {e}")
+
+    if debug:
+        st.write(f"[DEBUG] build_overview: Processed {len(rows)} tickers.")
+
+    # Convert rows to a DataFrame
+    if debug:
+        st.write("[DEBUG] Converting rows to DataFrame...")
     df_out = pd.DataFrame(rows)
-    
+
     # Sort by daily stage (1-6), then by MACD_Hist_Daily with stage-specific ordering
     if not df_out.empty:
+        if debug:
+            st.write("[DEBUG] Sorting DataFrame by stage and MACD histogram values...")
         # Extract numeric stage prefix for sorting (1-6)
         df_out['_stage_num'] = df_out['Trend (Daily)'].apply(lambda x: int(x.split('.')[0]) if '.' in str(x) else 999)
-        
+
         # Convert MACD hist to numeric
         df_out['_macd_num'] = df_out['MACD_Hist_Daily'].replace('', np.nan).astype(float)
-        
+
         # Create a custom sort key for MACD based on stage
-        # For stages 1 (Troughing): high to low (descending)
-        # For stage 2 (Confirmed Trough): high to low (descending) 
-        # For stage 3 (Rising): low to high (ascending)
-        # For stage 4 (Peaking): low to high (ascending)
-        # For stage 5 (Confirmed Peak): low to high (ascending)
-        # For stage 6 (Falling): high to low (descending)
-        
         def get_macd_sort_key(row):
             stage = row['_stage_num']
             macd_val = row['_macd_num']
-            
+
             if pd.isna(macd_val):
                 return 999999  # Put NaN values at the end
-            
+
             # Stages 1, 2, 6: descending (high to low) - negate the value
             if stage in [1, 2, 6]:
                 return -macd_val
             # Stages 3, 4, 5: ascending (low to high) - keep positive
             else:
                 return macd_val
-        
+
         df_out['_macd_sort'] = df_out.apply(get_macd_sort_key, axis=1)
-        
+
         # Sort by stage number first, then by the custom MACD sort key
         df_out = df_out.sort_values(['_stage_num', '_macd_sort'], ascending=[True, True])
-        
+
         # Drop temporary columns
         df_out = df_out.drop(columns=['_stage_num', '_macd_num', '_macd_sort']).reset_index(drop=True)
-    
+
+        if debug:
+            st.write("[DEBUG] DataFrame sorted successfully.")
+
+    if debug:
+        st.write("[DEBUG] build_overview completed.")
+        st.write(f"[DEBUG] Final DataFrame:\n{df_out}")
+
     return df_out
 
 def _get_db_stats(db_path):
@@ -585,11 +701,16 @@ def style_macd_by_trend(val, trend):
 
 def plot_multi_tf_macd(ticker, start_date, end_date, lookback):
     """Plot candlestick + MACD histograms for daily/weekly/monthly in subplots."""
-    df = load_price_range(ticker, start_date, end_date)  # Remove db_path parameter
+    df = load_price_range(ticker, start_date, end_date)
+    
+    # Debug: Check if data is loaded
     if df.empty:
-        st.warning(f"No data for {ticker}")
+        st.warning(f"No data available for ticker: {ticker}")
         return
-    df = df.sort_values('date').reset_index(drop=True)
+    st.write(f"[DEBUG] Loaded data for {ticker}: {len(df)} rows")
+
+    # Ensure data is sorted in ascending order for calculations
+    df = df.sort_values('date', ascending=True).reset_index(drop=True)
     
     # Pre-convert close to float once
     close = df['close'].astype(float)
@@ -597,42 +718,49 @@ def plot_multi_tf_macd(ticker, start_date, end_date, lookback):
     # Compute daily MACD
     _, _, histD = macd_hist(close)
     stageD = detect_stage(histD, lookback=lookback)
+    st.write(f"[DEBUG] Daily MACD stage for {ticker}: {stageD}")
     
     # Pre-calculate weekly resampling
     df_w = df.set_index('date').resample('W').agg({
-        'open':'first',
-        'high':'max',
-        'low':'min',
-        'close':'last',
-        'volume':'sum'
+        'open': 'first',
+        'high': 'max',
+        'low': 'min',
+        'close': 'last',
+        'volume': 'sum'
     }).dropna(subset=['close']).reset_index()
     
-    # Weekly MACD - no constraint
-    if not df_w.empty:
-        close_w = df_w['close'].astype(float)
-        _, _, histW = macd_hist(close_w)
-        stageW = detect_stage(histW, lookback=lookback)
-    else:
-        histW = pd.Series([])
-        stageW = "N/A"
+    # Debug: Check weekly data
+    if df_w.empty:
+        st.warning(f"No weekly data available for ticker: {ticker}")
+        return
+    st.write(f"[DEBUG] Weekly data for {ticker}: {len(df_w)} rows")
+    
+    # Weekly MACD
+    close_w = df_w['close'].astype(float)
+    _, _, histW = macd_hist(close_w)
+    stageW = detect_stage(histW, lookback=lookback)
+    st.write(f"[DEBUG] Weekly MACD stage for {ticker}: {stageW}")
     
     # Pre-calculate monthly resampling
     df_m = df.set_index('date').resample('M').agg({
-        'open':'first',
-        'high':'max',
-        'low':'min',
-        'close':'last',
-        'volume':'sum'
+        'open': 'first',
+        'high': 'max',
+        'low': 'min',
+        'close': 'last',
+        'volume': 'sum'
     }).dropna(subset=['close']).reset_index()
     
-    # Monthly MACD - no constraint
-    if not df_m.empty:
-        close_m = df_m['close'].astype(float)
-        _, _, histM = macd_hist(close_m)
-        stageM = detect_stage(histM, lookback=lookback)
-    else:
-        histM = pd.Series([])
-        stageM = "N/A"
+    # Debug: Check monthly data
+    if df_m.empty:
+        st.warning(f"No monthly data available for ticker: {ticker}")
+        return
+    st.write(f"[DEBUG] Monthly data for {ticker}: {len(df_m)} rows")
+    
+    # Monthly MACD
+    close_m = df_m['close'].astype(float)
+    _, _, histM = macd_hist(close_m)
+    stageM = detect_stage(histM, lookback=lookback)
+    st.write(f"[DEBUG] Monthly MACD stage for {ticker}: {stageM}")
     
     # Build subplots: candlestick + 3 MACD hists
     fig = make_subplots(rows=4, cols=1, shared_xaxes=True,
@@ -644,20 +772,18 @@ def plot_multi_tf_macd(ticker, start_date, end_date, lookback):
     
     # Daily MACD hist
     df['histD'] = histD.values
-    fig.add_trace(go.Bar(x=df['date'], y=df['histD'], name='Daily', marker_color=['#1f77b4' if v>=0 else '#ff7f0e' for v in df['histD']]), row=2, col=1)
-    fig.add_trace(go.Scatter(x=df['date'], y=[0]*len(df), mode='lines', line=dict(color='black', width=1), showlegend=False), row=2, col=1)
+    fig.add_trace(go.Bar(x=df['date'], y=df['histD'], name='Daily', marker_color=['#1f77b4' if v >= 0 else '#ff7f0e' for v in df['histD']]), row=2, col=1)
+    fig.add_trace(go.Scatter(x=df['date'], y=[0] * len(df), mode='lines', line=dict(color='black', width=1), showlegend=False), row=2, col=1)
     
     # Weekly MACD hist
-    if not df_w.empty:
-        df_w['histW'] = histW.values
-        fig.add_trace(go.Bar(x=df_w['date'], y=df_w['histW'], name='Weekly', marker_color=['#1f77b4' if v>=0 else '#ff7f0e' for v in df_w['histW']]), row=3, col=1)
-        fig.add_trace(go.Scatter(x=df_w['date'], y=[0]*len(df_w), mode='lines', line=dict(color='black', width=1), showlegend=False), row=3, col=1)
+    df_w['histW'] = histW.values
+    fig.add_trace(go.Bar(x=df_w['date'], y=df_w['histW'], name='Weekly', marker_color=['#1f77b4' if v >= 0 else '#ff7f0e' for v in df_w['histW']]), row=3, col=1)
+    fig.add_trace(go.Scatter(x=df_w['date'], y=[0] * len(df_w), mode='lines', line=dict(color='black', width=1), showlegend=False), row=3, col=1)
     
     # Monthly MACD hist
-    if not df_m.empty:
-        df_m['histM'] = histM.values
-        fig.add_trace(go.Bar(x=df_m['date'], y=df_m['histM'], name='Monthly', marker_color=['#1f77b4' if v>=0 else '#ff7f0e' for v in df_m['histM']]), row=4, col=1)
-        fig.add_trace(go.Scatter(x=df_m['date'], y=[0]*len(df_m), mode='lines', line=dict(color='black', width=1), showlegend=False), row=4, col=1)
+    df_m['histM'] = histM.values
+    fig.add_trace(go.Bar(x=df_m['date'], y=df_m['histM'], name='Monthly', marker_color=['#1f77b4' if v >= 0 else '#ff7f0e' for v in df_m['histM']]), row=4, col=1)
+    fig.add_trace(go.Scatter(x=df_m['date'], y=[0] * len(df_m), mode='lines', line=dict(color='black', width=1), showlegend=False), row=4, col=1)
     
     fig.update_layout(title=f"{ticker} — Multi-Timeframe MACD", xaxis_rangeslider_visible=False, template='plotly_white', height=900)
     fig.update_yaxes(title_text="Price", row=1, col=1)
@@ -694,7 +820,7 @@ if sidebar.button("Clear cache & reload"):
 
 all_tickers = get_all_tickers(debug=debug)
 
-days_back = sidebar.number_input("Days back for analysis", min_value=365, max_value=10000, value=3600)
+days_back = sidebar.number_input("Days back for analysis", min_value=365, max_value=10000, value=3000)
 lookback = sidebar.slider("Lookback (bars) for trough/peak detection", 5, 60, 20)
 
 # date range
@@ -840,13 +966,14 @@ else:
 if HAS_INTRADAY_UPDATER and 'intraday_auto_update_done' not in st.session_state:
     now = datetime.now()
     current_time = now.time()
-    
-    # Market hours: 9:00 AM to 5:00 PM
+    today_weekday = now.weekday()  # Monday=0, Sunday=6
+
+    # Market hours: 9:00 AM to 5:00 PM, skip Sat/Sun (weekday 5,6)
     market_start = datetime.strptime("09:00", "%H:%M").time()
     market_end = datetime.strptime("17:00", "%H:%M").time()
-    
-    # Only auto-update if during market hours AND database already has data
-    if market_start <= current_time <= market_end and len(all_tickers) > 0:
+
+    # Only auto-update if during market hours, not Sat/Sun, AND database already has data
+    if market_start <= current_time <= market_end and today_weekday < 5 and len(all_tickers) > 0:
         # Check if today's data already exists in database
         today_str = datetime.now().strftime("%Y-%m-%d")
         has_today_data = False
@@ -904,9 +1031,11 @@ if HAS_INTRADAY_UPDATER and 'intraday_auto_update_done' not in st.session_state:
                 except:
                     pass
     else:
-        # Mark as "done" even if not in market hours to prevent repeated checks
+        # Mark as "done" even if not in market hours or on Sat/Sun to prevent repeated checks
         st.session_state['intraday_auto_update_done'] = True
-        if len(all_tickers) == 0:
+        if today_weekday >= 5:
+            st.sidebar.info("ℹ️ Weekend detected (Sat/Sun). Intraday update skipped.")
+        elif len(all_tickers) == 0:
             st.sidebar.info("ℹ️ No tickers in database. Add tickers first.")
 
 # Show intraday update status if available
@@ -927,31 +1056,308 @@ if HAS_BDB:
         st.markdown("### TCBS refresh (all tickers)")
         st.caption("Use this for historical data updates. During market hours, intraday updates are preferred.")
         
-        refresh_interval_min = sidebar.number_input("Refresh interval (minutes)", min_value=5, max_value=60, value=10, step=1)
-        pause_between = sidebar.number_input("Pause between calls (s)", min_value=0.0, max_value=5.0, value=0.25, step=0.05)
-        confirm_all = sidebar.checkbox("I confirm: refresh ALL tickers from TCBS", value=False)
+        # Date range selector
+        st.markdown("**Select Date Range**")
+        col1, col2 = st.columns(2)
+        with col1:
+            refresh_start_date = st.date_input(
+                "Start Date",
+                value=datetime.now().date() - timedelta(days=5),
+                max_value=datetime.now().date(),
+                key="tcbs_refresh_start"
+            )
+        with col2:
+            refresh_end_date = st.date_input(
+                "End Date",
+                value=datetime.now().date(),
+                max_value=datetime.now().date(),
+                key="tcbs_refresh_end"
+            )
         
-        # Check if async is available
+        # Show date range summary
+        days_to_refresh = (refresh_end_date - refresh_start_date).days + 1
+        st.caption(f"📅 Will refresh {days_to_refresh} days of data ({refresh_start_date} to {refresh_end_date})")
+        
+        st.markdown("---")
+        
+        pause_between = st.number_input("Pause between calls (s)", min_value=0.0, max_value=5.0, value=0.25, step=0.05, key="tcbs_pause")
+        
+        # Replace or append option
+        replace_data = st.checkbox(
+            "Replace existing data in range",
+            value=True,
+            help="If checked, will DELETE existing data in date range before inserting new data."
+        )
+
+        # Debug mode for refresh
+        debug_refresh = st.checkbox(
+            "Show detailed debug output",
+            value=False,
+            help="Display detailed information about each ticker's refresh process"
+        )
+        
+        confirm_all = st.checkbox("I confirm: refresh ALL tickers from TCBS", value=False, key="tcbs_confirm")
+        
+        # Check which functions are available
         has_async = False
+        has_sync_single = False
+        
         try:
             import aiohttp
             has_async = hasattr(bdb, 'fetch_and_scale_async')
+            has_sync_single = hasattr(bdb, 'fetch_ohlcv') or hasattr(bdb, 'fetch_price_data')
         except ImportError:
-            has_async = False
+            pass
         
+        # Show available methods
         if has_async:
             st.caption("✓ Async mode available")
+        elif has_sync_single:
+            st.caption("✓ Sync mode available")
         else:
-            st.caption("ℹ️ Async mode not available (missing aiohttp or async functions)")
+            st.caption("⚠️ Limited refresh capability")
         
-        force_all_btn = sidebar.button("Force refresh ALL tickers now")
+        # Show available bdb functions for debugging
+        if debug_refresh:
+            with st.expander("🔧 Available bdb functions", expanded=False):
+                available_funcs = [func for func in dir(bdb) if not func.startswith('_')]
+                st.code('\n'.join(available_funcs), language='python')
+        
+        if st.button("🔄 Force refresh ALL tickers now", use_container_width=True, disabled=not confirm_all):
+            if confirm_all:
+                # Create debug log container
+                debug_container = st.container() if debug_refresh else None
+                
+                with st.spinner(f"Refreshing {len(all_tickers)} tickers from {refresh_start_date} to {refresh_end_date}..."):
+                    success_count = 0
+                    error_count = 0
+                    error_details = []
+                    
+                    progress_bar = st.progress(0)
+                    status_text = st.empty()
+                    
+                    for idx, ticker in enumerate(all_tickers):
+                        ticker_debug = []
+                        try:
+                            status_text.text(f"Processing {ticker} ({idx+1}/{len(all_tickers)})...")
+                            ticker_debug.append(f"[{ticker}] Starting refresh...")
+
+                            
+
+                            # Fetch new data
+                            result_success = False
+                            fetch_method = "unknown"
+
+                            try:
+                                if has_async:
+                                    fetch_method = "async (fetch_and_scale_async)"
+                                    ticker_debug.append(f"[{ticker}] Trying {fetch_method}...")
+
+                                    import inspect
+                                    sig = inspect.signature(bdb.fetch_and_scale_async)
+                                    params = list(sig.parameters.keys())
+                                    ticker_debug.append(f"[{ticker}] fetch_and_scale_async params: {params}")
+
+                                    import aiohttp
+
+                                    async def fetch_and_upsert():
+                                        async with aiohttp.ClientSession() as session:
+                                            # Call fetch_and_scale_async
+                                            df = await bdb.fetch_and_scale_async(
+                                                session=session,
+                                                ticker=ticker,
+                                                days=days_to_refresh if 'days' in params else None,
+                                                resolution='D' if 'resolution' in params else None,
+                                                timeout=30 if 'timeout' in params else None
+                                            )
+                                            # Upsert to DB if DataFrame and db_adapter available
+                                            upserted = 0
+                                            if isinstance(df, pd.DataFrame) and HAS_DB_ADAPTER:
+                                                from db_adapter import get_db_adapter
+                                                db_adapter = get_db_adapter()
+                                                for row in df.itertuples(index=False):
+                                                    ohlcv = {
+                                                        'open': getattr(row, 'open', None),
+                                                        'high': getattr(row, 'high', None),
+                                                        'low': getattr(row, 'low', None),
+                                                        'close': getattr(row, 'close', None),
+                                                        'volume': getattr(row, 'volume', 0)
+                                                    }
+                                                    ok = db_adapter.insert_price_data(
+                                                        ticker=ticker,
+                                                        date=getattr(row, 'tradingDate', getattr(row, 'date', None)),
+                                                        ohlcv=ohlcv,
+                                                        source='tcbs'
+                                                    )
+                                                    if ok:
+                                                        upserted += 1
+                                            return df, upserted
+
+                                    loop = asyncio.new_event_loop()
+                                    asyncio.set_event_loop(loop)
+                                    fetch_result, upserted = loop.run_until_complete(fetch_and_upsert())
+                                    loop.close()
+
+                                    if isinstance(fetch_result, pd.DataFrame):
+                                        ticker_debug.append(f"[{ticker}] Fetched price data preview (last 10 rows):")
+                                        for r in fetch_result.tail(10).itertuples(index=False):
+                                            date = getattr(r, 'tradingDate', getattr(r, 'date', ''))
+                                            close = getattr(r, 'close', '')
+                                            open_ = getattr(r, 'open', '')
+                                            ticker_debug.append(f"  {date} | open={open_} | close={close}")
+                                        if len(fetch_result) > 10:
+                                            ticker_debug.append(f"  ...{len(fetch_result)-10} earlier rows not shown")
+                                        if not fetch_result.empty:
+                                            result_success = True
+                                            ticker_debug.append(f"[{ticker}] ✓ Async fetch returned non-empty DataFrame ({len(fetch_result)} rows)")
+                                            ticker_debug.append(f"[{ticker}] ✓ Upserted {upserted} rows to DB")
+                                        else:
+                                            ticker_debug.append(f"[{ticker}] ✗ Async fetch returned empty DataFrame")
+                                    elif fetch_result is not None and fetch_result is not False:
+                                        ticker_debug.append(f"[{ticker}] Fetched price data type: {type(fetch_result)}")
+                                        result_success = True
+                                        ticker_debug.append(f"[{ticker}] ✓ Async fetch returned: {type(fetch_result)}")
+                                    else:
+                                        ticker_debug.append(f"[{ticker}] ✗ Async fetch returned False/None")
+                                elif hasattr(bdb, 'fetch_ohlcv'):
+                                    # Try fetch_ohlcv
+                                    fetch_method = "sync (fetch_ohlcv)"
+                                    ticker_debug.append(f"[{ticker}] Trying {fetch_method}...")
+                                    
+                                    # Check function signature
+                                    import inspect
+                                    sig = inspect.signature(bdb.fetch_ohlcv)
+                                    params = sig.parameters.keys()
+                                    ticker_debug.append(f"[{ticker}] fetch_ohlcv params: {list(params)}")
+                                    
+                                    data = bdb.fetch_ohlcv(ticker)
+                                    # Show fetched price data (last 10 rows)
+                                    if isinstance(data, pd.DataFrame):
+                                        ticker_debug.append(f"[{ticker}] Fetched price data preview (last 10 rows):")
+                                        for r in data.tail(10).itertuples(index=False):
+                                            date = getattr(r, 'date', '')
+                                            close = getattr(r, 'close', '')
+                                            open_ = getattr(r, 'open', '')
+                                            ticker_debug.append(f"  {date} | open={open_} | close={close}")
+                                        if len(data) > 10:
+                                            ticker_debug.append(f"  ...{len(data)-10} earlier rows not shown")
+                                elif hasattr(bdb, 'fetch_price_data'):
+                                    # Try fetch_price_data
+                                    fetch_method = "sync (fetch_price_data)"
+                                    ticker_debug.append(f"[{ticker}] Trying {fetch_method}...")
+                                    
+                                    # Check function signature
+                                    import inspect
+                                    sig = inspect.signature(bdb.fetch_price_data)
+                                    params = sig.parameters.keys()
+                                    ticker_debug.append(f"[{ticker}] fetch_price_data params: {list(params)}")
+                                    
+                                    data = bdb.fetch_price_data(ticker)
+                                    # Show fetched price data (last 10 rows)
+                                    if isinstance(data, pd.DataFrame):
+                                        ticker_debug.append(f"[{ticker}] Fetched price data preview (last 10 rows):")
+                                        for r in data.tail(10).itertuples(index=False):
+                                            date = getattr(r, 'date', '')
+                                            close = getattr(r, 'close', '')
+                                            open_ = getattr(r, 'open', '')
+                                            ticker_debug.append(f"  {date} | open={open_} | close={close}")
+                                        if len(data) > 10:
+                                            ticker_debug.append(f"  ...{len(data)-10} earlier rows not shown")
+                                else:
+                                    ticker_debug.append(f"[{ticker}] ✗ No fetch methods available")
+                            except Exception as fetch_error:
+                                import traceback
+                                error_traceback = traceback.format_exc()
+                                ticker_debug.append(f"[{ticker}] ❌ Fetch error using {fetch_method}: {fetch_error}")
+                                ticker_debug.append(f"[{ticker}] Traceback: {error_traceback[-500:]}")  # Last 500 chars
+                            
+                            if result_success:
+                                success_count += 1
+                                ticker_debug.append(f"[{ticker}] ✅ SUCCESS")
+                            else:
+                                error_count += 1
+                                ticker_debug.append(f"[{ticker}] ❌ FAILED")
+                                error_details.append({
+                                    'ticker': ticker,
+                                    'method': fetch_method,
+                                    'debug': ticker_debug
+                                })
+                            
+                            # Show debug output if enabled
+                            if debug_refresh and debug_container:
+                                with debug_container:
+                                    with st.expander(f"{ticker} - {'✅' if result_success else '❌'}", expanded=not result_success):
+                                        for line in ticker_debug:
+                                            st.text(line)
+                            
+                            # Update progress
+                            progress_bar.progress((idx + 1) / len(all_tickers))
+                            
+                            # Pause between calls
+                            if pause_between > 0:
+                                time.sleep(pause_between)
+                                
+                        except Exception as e:
+                            error_count += 1
+                            ticker_debug.append(f"[{ticker}] ❌ EXCEPTION: {e}")
+                            error_details.append({
+                                'ticker': ticker,
+                                'method': 'exception',
+                                'debug': ticker_debug,
+                                'error': str(e)
+                            })
+                            
+                            if debug_refresh and debug_container:
+                                with debug_container:
+                                    with st.expander(f"{ticker} - ❌ EXCEPTION", expanded=True):
+                                        for line in ticker_debug:
+                                            st.text(line)
+                            
+                            time.sleep(0.1)
+                    
+                    progress_bar.empty()
+                    status_text.empty()
+                    
+                    # Show results
+                    if error_count > 0:
+                        st.warning(f"⚠️ Completed with errors: {success_count} succeeded, {error_count} failed")
+                        
+                        # Show failed tickers summary
+                        with st.expander(f"❌ Failed Tickers ({error_count})", expanded=True):
+                            failed_tickers = [detail['ticker'] for detail in error_details]
+                            st.error(f"**Failed:** {', '.join(failed_tickers)}")
+                            
+                            # Show detailed errors if debug mode
+                            if debug_refresh:
+                                for detail in error_details[:10]:  # Limit to first 10
+                                    st.text(f"\n{detail['ticker']} ({detail['method']}):")
+                                    for line in detail['debug'][-5:]:  # Last 5 lines
+                                        st.text(f"  {line}")
+                    else:
+                        st.success(f"✅ Successfully refreshed {success_count} tickers")
+                    
+                    # Clear cache to show updated data
+                    try:
+                        load_price_range.clear()
+                        get_all_tickers.clear()
+                    except:
+                        pass
+                    
+                    st.info("💡 Refresh complete! Data has been updated.")
+        
+        st.markdown("---")
+        st.markdown("**ℹ️ About Historical Refresh**")
+        st.caption("""
+        This feature:
+        - Fetches historical OHLCV data from TCBS API
+        - Can replace existing data or append/update
+        - Works with available fetch functions
+        - Slower than intraday updates (use for historical data)
+        - Enable debug mode to see detailed refresh information
+        """)
 else:
-    force_all_btn = False
-    has_async = False
     with sidebar.expander("🔄 TCBS Historical Refresh", expanded=False):
         st.warning("TCBS refresh disabled (build_price_db not available)")
-
-sidebar.markdown("---")
 
 # --- Dividend Adjustments Section --------------------------------------------
 if HAS_DIVIDEND_ADJUSTER:
@@ -1101,14 +1507,33 @@ with sidebar.expander("🔧 Admin: Manage Tickers", expanded=False):
 # --- Always build overview ---------------------------------------------------
 with st.spinner("Building overview for tickers in DB..."):
     tickers = all_tickers
-    if not tickers:
-        df_over = pd.DataFrame()
-    else:
-        df_over = build_overview(tickers, start_date.strftime("%Y-%m-%d"), end_date.strftime("%Y-%m-%d"), lookback=lookback, max_rows=len(tickers))
+    # Use cached overview if available and date range matches
+    cache_key = f"overview_{start_date}_{end_date}_{lookback}_{len(tickers)}"
+    df_over = st.session_state.get(cache_key, None)
+    if df_over is None:
+        if not tickers:
+            df_over = pd.DataFrame()
+        else:
+            df_over = build_overview(tickers, start_date.strftime("%Y-%m-%d"), end_date.strftime("%Y-%m-%d"), lookback=lookback, max_rows=len(tickers), debug=debug)
+            st.write(f"[DEBUG] Built overview with {len(df_over)} rows for {len(tickers)} tickers")
+        st.session_state[cache_key] = df_over
 
 # Main view: always show today/overview table with current date in header
-current_date_str = datetime.now().strftime("%Y-%m-%d")
-st.markdown(f"##### Overview — latest bar per ticker ({current_date_str})")
+current_date_str = datetime.now().strftime("%Y-%m-%d")  # <-- Add this line before using current_date_str
+
+# Find latest bar date in DB for display
+latest_bar_date = None
+if not df_over.empty and "Ticker" in df_over.columns:
+    try:
+        # Get the latest date from the DataFrame
+        latest_bar_date = df_over['Date'].idxmax()  # Ensure the latest date is displayed
+    except Exception:
+        latest_bar_date = None
+
+if latest_bar_date:
+    st.markdown(f"##### Overview — latest bar per ticker ({latest_bar_date})")
+else:
+    st.markdown(f"##### Overview — latest bar per ticker ({current_date_str})")
 
 # Add collapsible list of tickers with signals - grouped by signal type
 if not df_over.empty and 'Signal' in df_over.columns:
@@ -1170,19 +1595,62 @@ if not df_over.empty and 'Signal' in df_over.columns:
 
 if df_over is None or df_over.empty:
     st.warning("No data available to build overview. Ensure price_data.db has rows.")
+    # Debug info: show DB path, file existence, and row count
+    st.markdown("#### Debug Info")
+    st.write(f"DB Path: `{DB_PATH}`")
+    db_exists = os.path.exists(DB_PATH)
+    st.write(f"DB Exists: {db_exists}")
+    if db_exists:
+        try:
+            conn = sqlite3.connect(DB_PATH)
+            cur = conn.cursor()
+            cur.execute("SELECT COUNT(*) FROM price_data")
+            row_count = cur.fetchone()[0]
+            st.write(f"price_data row count: {row_count}")
+            cur.execute("SELECT DISTINCT ticker FROM price_data")
+            tickers_in_db = [r[0] for r in cur.fetchall()]
+            st.write(f"Tickers in DB: {tickers_in_db[:20]}{' ...' if len(tickers_in_db) > 20 else ''}")
+            # Additional debug: show sample rows for first few tickers
+            for sample_ticker in tickers_in_db[:3]:
+                cur.execute("SELECT * FROM price_data WHERE ticker = ? ORDER BY date DESC LIMIT 5", (sample_ticker,))
+                sample_rows = cur.fetchall()
+                st.write(f"Sample rows for ticker {sample_ticker}:")
+                for r in sample_rows:
+                    st.write(r)
+            # Show tickers requested for overview but not found in DB
+            missing_tickers = [t for t in all_tickers if t not in tickers_in_db]
+            if missing_tickers:
+                st.write(f"Tickers requested but not found in DB: {missing_tickers[:10]}{' ...' if len(missing_tickers) > 10 else ''}")
+            # Show tickers with no data in requested date range
+            for t in all_tickers[:5]:
+                cur.execute("SELECT COUNT(*) FROM price_data WHERE ticker = ? AND date >= ? AND date <= ?", (t, start_date.strftime("%Y-%m-%d"), end_date.strftime("%Y-%m-%d")))
+                cnt = cur.fetchone()[0]
+                if cnt == 0:
+                    st.write(f"[DEBUG] Ticker {t} has no rows in date range {start_date} to {end_date}")
+            conn.close()
+        except Exception as e:
+            st.write(f"DB error: {e}")
+    else:
+        st.write("Database file not found.")
 else:
     # Display main overview table
     display_cols = ["Ticker","Close","Trend (Daily)","Trend (Weekly)","Trend (Monthly)","Score","MACD_Hist_Daily","MACD_Hist_Weekly","MACD_Hist_Monthly","Vol/AvgVol","Signal"]
     
+    # Add toggle option in the sidebar
+    show_latest_date = sidebar.checkbox("Show Latest Date", value=False)
+
+    if show_latest_date:
+        display_cols.insert(2, "Latest Date")  # Insert "Latest Date" into the visible columns
+
     styled = df_over[display_cols].style
     styled = styled.applymap(style_stage_column, subset=["Trend (Daily)", "Trend (Weekly)", "Trend (Monthly)"])
-    styled = styled.applymap(style_vol_ratio, subset=["Vol/AvgVol"])
+    styled = styled.applymap(style_vol_ratio, subset=["Vol/AvgVol"])  # Fixed syntax error
     
     def style_row_by_score(row):
         score = row["Score"]
         ticker_style = style_by_score(row["Ticker"], score)
         close_style = style_by_score(row["Close"], score)
-        return pd.Series([ticker_style, close_style, '', '', '', '', '', '', '', '', ''], index=display_cols)
+        return pd.Series([ticker_style, close_style] + [''] * (len(display_cols) - 2), index=display_cols)
     
     styled = styled.apply(style_row_by_score, axis=1)
     
@@ -1190,7 +1658,7 @@ else:
         macd_d_style = style_macd_by_trend(row["MACD_Hist_Daily"], row["Trend (Daily)"])
         macd_w_style = style_macd_by_trend(row["MACD_Hist_Weekly"], row["Trend (Weekly)"])
         macd_m_style = style_macd_by_trend(row["MACD_Hist_Monthly"], row["Trend (Monthly)"])
-        return pd.Series(['', '', '', '', '', '', macd_d_style, macd_w_style, macd_m_style, '', ''], index=display_cols)
+        return pd.Series([''] * 6 + [macd_d_style, macd_w_style, macd_m_style] + [''] * (len(display_cols) - 9), index=display_cols)
     
     styled = styled.apply(style_macd_by_trends, axis=1)
     
@@ -1212,57 +1680,24 @@ if st.session_state.selected_ticker:
     
     st.subheader(f"Detailed MACD Analysis — {ticker}")
     st.markdown("#### 📈 Multi-Timeframe MACD Analysis")
-    df = load_price_range(ticker, start_date, end_date)
-    if not df.empty:
-        plot_multi_tf_macd(ticker, start_date, end_date, lookback=lookback)
+    plot_multi_tf_macd(ticker, start_date, end_date, lookback=lookback)
+    
     
     if st.button("Back to Overview"):
         st.session_state.selected_ticker = None
         st.rerun()
 
-# After building overview, show data availability summary if debug is enabled
-if debug and not df_over.empty:
-    st.markdown("---")
-    st.markdown("### 📊 Data Availability Summary")
-    
-    # Count tickers with missing indicators
-    missing_weekly = df_over[df_over['MACD_Hist_Weekly'] == ''].shape[0]
-    missing_monthly = df_over[df_over['MACD_Hist_Monthly'] == ''].shape[0]
-    
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        st.metric("Total Tickers", len(df_over))
-    with col2:
-        st.metric("Missing Weekly MACD", missing_weekly, 
-                 delta=f"{missing_weekly/len(df_over)*100:.1f}%" if len(df_over) > 0 else "0%",
-                 delta_color="inverse")
-    with col3:
-        st.metric("Missing Monthly MACD", missing_monthly,
-                 delta=f"{missing_monthly/len(df_over)*100:.1f}%" if len(df_over) > 0 else "0%", 
-                 delta_color="inverse")
-    
-    if missing_weekly > 0 or missing_monthly > 0:
-        st.warning(f"""
-        ⚠️ **Insufficient Historical Data Detected**
-        
-        - **Current setting:** {days_back} days back
-        - **Recommendation for weekly MACD:** 250+ days (~8-9 months)
-        - **Recommendation for monthly MACD:** 1100+ days (~3 years)
-        
-        Tickers with missing indicators likely don't have enough historical data in the database.
-        Increase 'Days back for analysis' in the sidebar to get complete indicator coverage.
-        """)
-        
-        # Show which tickers are affected
-        if missing_monthly > 0:
-            missing_monthly_tickers = df_over[df_over['MACD_Hist_Monthly'] == '']['Ticker'].tolist()
-            st.caption(f"**Missing Monthly MACD:** {', '.join(missing_monthly_tickers[:20])}" + 
-                      (f" and {len(missing_monthly_tickers)-20} more..." if len(missing_monthly_tickers) > 20 else ""))
-        
-        if missing_weekly > 0:
-            missing_weekly_tickers = df_over[df_over['MACD_Hist_Weekly'] == '']['Ticker'].tolist()
-            st.caption(f"**Missing Weekly MACD:** {', '.join(missing_weekly_tickers[:20])}" + 
-                      (f" and {len(missing_weekly_tickers)-20} more..." if len(missing_weekly_tickers) > 20 else ""))
-    elif debug:
-        # Only show in debug mode when all data is complete
-        st.success(f"✅ All {len(df_over)} tickers have complete Daily, Weekly, and Monthly MACD data")
+# In build_overview and plot_multi_tf_macd, MACD histograms are calculated only if there is enough data.
+# If you see no MACD hist for tickers like DCM to VTP, possible reasons are:
+# 1. The DataFrame for that ticker is empty or missing recent data.
+# 2. There are duplicate or missing dates, causing the MACD calculation to fail.
+# 3. There are less than 3 valid data points after cleaning, so MACD cannot be computed.
+# 4. Data was removed due to duplicate cleanup, or the database is missing historical bars.
+
+# To debug:
+# - Check if load_price_range(ticker, start_date, end_date) returns a non-empty DataFrame for those tickers.
+# - Ensure there are no duplicate dates and the date range covers enough bars.
+# - Confirm that after duplicate removal, at least 3 valid rows remain for each ticker.
+
+# If you want to see why a ticker has no MACD hist, enable debug mode in the dashboard sidebar.
+# This will print the latest date and row count for each ticker during overview building.

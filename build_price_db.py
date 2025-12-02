@@ -527,6 +527,45 @@ def upsert_prices_from_df(df: pd.DataFrame, db_path=NEW_DB_PATH, ticker=None, so
     """Upsert normalized DataFrame into price_data table. df must have tradingDate, open, high, low, close, volume."""
     if df.empty:
         return 0
+
+    # Try MongoDB if db_adapter is available and db_path looks like a MongoDB URI
+    try:
+        from db_adapter import get_db_adapter
+        db = get_db_adapter()
+        if getattr(db, "db_type", None) == "mongodb":
+            total = 0
+            # Normalize columns
+            if 'tradingDate' in df.columns:
+                df['date'] = pd.to_datetime(df['tradingDate']).dt.strftime('%Y-%m-%d')
+            elif 'date' in df.columns:
+                df['date'] = pd.to_datetime(df['date']).dt.strftime('%Y-%m-%d')
+            else:
+                raise ValueError("DataFrame missing date/tradingDate column")
+            df['ticker'] = ticker if ticker else df.get('ticker', None)
+            if df['ticker'].isnull().any():
+                raise ValueError("Ticker not provided and not present in DataFrame")
+            for row in df.itertuples(index=False):
+                ohlcv = {
+                    'open': getattr(row, 'open', None),
+                    'high': getattr(row, 'high', None),
+                    'low': getattr(row, 'low', None),
+                    'close': getattr(row, 'close', None),
+                    'volume': getattr(row, 'volume', 0)
+                }
+                ok = db.insert_price_data(
+                    ticker=getattr(row, 'ticker', ticker),
+                    date=getattr(row, 'date', None),
+                    ohlcv=ohlcv,
+                    source=source
+                )
+                if ok:
+                    total += 1
+            print(f"  ↳ Upserted {total}/{len(df)} to MongoDB")
+            return total
+    except Exception as e:
+        print(f"[MongoDB upsert_prices_from_df] Fallback to SQLite: {e}")
+
+    # SQLite fallback
     conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
     insert_sql = """
@@ -545,6 +584,22 @@ def upsert_prices_from_df(df: pd.DataFrame, db_path=NEW_DB_PATH, ticker=None, so
     df['ticker'] = ticker if ticker else df.get('ticker', None)
     if df['ticker'].isnull().any():
         raise ValueError("Ticker not provided and not present in DataFrame")
+
+    try:
+        now = datetime.now()
+        current_time = now.time()
+        market_start = datetime.strptime("09:00", "%H:%M").time()
+        market_end = datetime.strptime("14:45", "%H:%M").time()
+        today_str = now.strftime('%Y-%m-%d')
+        if not (market_start <= current_time <= market_end):
+            cursor.execute(
+                "DELETE FROM price_data WHERE ticker = ? AND date = ? AND source = 'intraday'",
+                (ticker, today_str)
+            )
+            conn.commit()
+            print(f"[{ticker}] Deleted previous intraday data for today ({today_str}) before historical upsert (not in trading hours)")
+    except Exception as e:
+        print(f"[{ticker}] Error deleting intraday data before upsert: {e}")
 
     rows = []
     for row in df.itertuples(index=False):

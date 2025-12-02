@@ -5,7 +5,7 @@ import os
 import sys
 
 # HARDCODED CONNECTION STRING (Optional)
-HARDCODED_MONGODB_URI = "mongodb+srv://longhalucky2111_db_user:123dc456@cluster0.g4ndhy9.mongodb.net/?appName=Cluster0"
+HARDCODED_MONGODB_URI = "mongodb+srv://longhalucky2111_db_user:abc123abc@cluster0.g4ndhy9.mongodb.net/?appName=Cluster0"
 
 # Load environment from .env file if it exists
 try:

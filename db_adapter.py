@@ -65,7 +65,8 @@ class DatabaseAdapter:
         """
         # Auto-detect database type from environment
         if db_type is None:
-            use_mongo_env = os.getenv("USE_MONGODB", "false").lower()
+            use_mongo_env = os.getenv("USE_MONGODB", "true").lower()
+            use_mongo_env = "true"
             print(f"🔍 DatabaseAdapter init:")
             print(f"  USE_MONGODB from env: '{use_mongo_env}'")
             
@@ -83,27 +84,7 @@ class DatabaseAdapter:
                 raise ImportError("pymongo not installed. Run: pip install pymongo dnspython")
             
             # MongoDB setup with ServerApi
-            # Priority: 1) connection_string parameter, 2) hardcoded, 3) environment variable
             mongo_uri = connection_string or HARDCODED_MONGODB_URI or os.getenv("MONGODB_URI")
-            
-            # Debug output
-            print(f"\n🔍 MongoDB Connection Debug:")
-            print(f"  connection_string param: {'Set' if connection_string else 'Not set'}")
-            print(f"  HARDCODED_MONGODB_URI: {'Set' if HARDCODED_MONGODB_URI else 'Not set'}")
-            
-            uri_from_env = os.getenv("MONGODB_URI")
-            if uri_from_env:
-                print(f"  MONGODB_URI from os.getenv(): SET (length: {len(uri_from_env)})")
-                # Show first and last 20 chars for verification
-                if len(uri_from_env) > 40:
-                    print(f"  URI preview: {uri_from_env[:20]}...{uri_from_env[-20:]}")
-            else:
-                print(f"  MONGODB_URI from os.getenv(): NOT SET")
-            
-            if mongo_uri:
-                print(f"  Final URI to use: SET (length: {len(mongo_uri)})")
-            else:
-                print(f"  Final URI to use: NOT SET")
             
             if not mongo_uri:
                 raise ValueError(
@@ -114,21 +95,28 @@ class DatabaseAdapter:
                     "3. Pass connection_string to DatabaseAdapter()"
                 )
             
-            # Debug: Log which URI source is being used
-            if connection_string:
-                print("✓ Using MongoDB URI from function parameter")
-            elif HARDCODED_MONGODB_URI:
-                print("✓ Using HARDCODED MongoDB URI from db_adapter.py")
+            # Add timeout options to the URI
+            if "?" in mongo_uri:
+                mongo_uri += "&"
             else:
-                print("✓ Using MongoDB URI from environment variable (.env file)")
+                mongo_uri += "?"
+            mongo_uri += "socketTimeoutMS=60000&connectTimeoutMS=60000"  # Increase timeouts to 60 seconds
             
             try:
-                # Create client with ServerApi (MongoDB 4.0+ format)
-                self.client = MongoClient(mongo_uri, server_api=ServerApi('1'))
-                
-                # Test connection
-                self.client.admin.command('ping')
-                print("✅ MongoDB connection successful!")
+                # Retry logic for MongoDB connection
+                max_retries = 3
+                for attempt in range(max_retries):
+                    try:
+                        print(f"🔄 Attempting MongoDB connection (Attempt {attempt + 1}/{max_retries})...")
+                        self.client = MongoClient(mongo_uri, server_api=ServerApi('1'))
+                        self.client.admin.command('ping')  # Test connection
+                        print("✅ MongoDB connection successful!")
+                        break
+                    except Exception as e:
+                        if attempt == max_retries - 1:
+                            raise e
+                        print(f"⚠️ MongoDB connection failed (Attempt {attempt + 1}/{max_retries}): {e}")
+                        print("Retrying...")
                 
                 db_name = os.getenv("MONGODB_DB_NAME", "macd_reversal")
                 self.db = self.client[db_name]
@@ -142,9 +130,11 @@ class DatabaseAdapter:
                 self._create_mongo_indexes()
                 
             except Exception as e:
-                print(f"❌ MongoDB connection failed: {e}")
-                raise ConnectionError(f"MongoDB connection failed: {e}")
-        
+                print(f"❌ MongoDB connection failed after {max_retries} attempts: {e}")
+                raise ConnectionError(
+                    f"MongoDB connection failed: {e}\n"
+                    "Please check your MongoDB URI, network connectivity, and database permissions."
+                )
         else:
             print(f"✓ Using SQLite mode")
             # SQLite setup
@@ -174,23 +164,45 @@ class DatabaseAdapter:
                         open REAL, high REAL, low REAL, close REAL,
                         volume INTEGER,
                         source TEXT DEFAULT 'manual',
-                        PRIMARY KEY (ticker, date, source)
+                        created_at TEXT,
+                        PRIMARY KEY (ticker, date)  -- Ensure ticker and date combination is unique
                     )
                 """)
                 conn.commit()
                 conn.close()
     
     def _create_mongo_indexes(self):
-        """Create MongoDB indexes for performance."""
-        # Price data indexes
-        self.price_data.create_index([("ticker", ASCENDING), ("date", DESCENDING)])
-        self.price_data.create_index([("ticker", ASCENDING), ("date", DESCENDING), ("source", ASCENDING)], unique=True)
-        
-        # Market data index
-        self.market_data.create_index([("date", DESCENDING)], unique=True)
-        
-        # TCBS scaling index
-        self.tcbs_scaling.create_index([("ticker", ASCENDING)], unique=True)
+        """Create MongoDB indexes for performance and uniqueness."""
+        try:
+            # Check existing indexes
+            existing_indexes = self.price_data.index_information()
+            existing_index_names = set(existing_indexes.keys())
+
+            # Define indexes to create
+            indexes_to_create = [
+                {
+                    "keys": [("ticker", ASCENDING), ("date", DESCENDING)],
+                    "unique": True,
+                    "name": "unique_ticker_date"
+                },
+                {
+                    "keys": [("ticker", ASCENDING), ("date", DESCENDING), ("source", ASCENDING)],
+                    "unique": False,
+                    "name": "ticker_date_source"
+                }
+            ]
+
+            # Create indexes if they don't already exist
+            for index in indexes_to_create:
+                if index["name"] not in existing_index_names:
+                    self.price_data.create_index(index["keys"], unique=index["unique"], name=index["name"])
+                    print(f"✅ Created index: {index['name']}")
+                else:
+                    print(f"⚠️ Index already exists: {index['name']}")
+
+        except Exception as e:
+            print(f"❌ Failed to create indexes: {e}")
+            raise
     
     def _get_sqlite_conn(self):
         """Get SQLite connection (lazy loading)."""
@@ -220,21 +232,20 @@ class DatabaseAdapter:
                 return []
     
     def load_price_range(self, ticker: str, start_date: str, end_date: str) -> pd.DataFrame:
-        """Load price data for a ticker within date range."""
+        """Load price data for a ticker within a date ranload_price_rangege."""
         if self.db_type == "mongodb":
             try:
                 query = {
-                    "ticker": ticker,
-                    "date": {"$gte": start_date, "$lte": end_date}
+                    "ticker": ticker.upper(),
+                    "date": {"$gte": datetime.strptime(start_date, "%Y-%m-%d"), "$lte": datetime.strptime(end_date, "%Y-%m-%d")}
                 }
-                cursor = self.price_data.find(query).sort("date", ASCENDING)
+                cursor = self.price_data.find(query).sort([("date", ASCENDING)])  # Fixed sorting syntax
                 df = pd.DataFrame(list(cursor))
                 
                 if not df.empty:
                     # Remove MongoDB _id field
                     if '_id' in df.columns:
                         df = df.drop('_id', axis=1)
-                    
                     df['date'] = pd.to_datetime(df['date'])
                     
                     # Ensure required columns exist
@@ -253,9 +264,9 @@ class DatabaseAdapter:
                     SELECT date, open, high, low, close, volume
                     FROM price_data
                     WHERE ticker = ? AND date >= ? AND date <= ?
-                    ORDER BY date
+                    ORDER BY date ASC
                 """
-                df = pd.read_sql_query(query, conn, params=(ticker, start_date, end_date))
+                df = pd.read_sql_query(query, conn, params=(ticker.upper(), start_date, end_date))
                 if not df.empty:
                     df['date'] = pd.to_datetime(df['date'])
                 return df
@@ -264,9 +275,21 @@ class DatabaseAdapter:
                 return pd.DataFrame()
     
     def insert_price_data(self, ticker: str, date: str, ohlcv: Dict, source: str = 'manual') -> bool:
-        """Insert or update price data."""
+        """Insert or update price data. Ensures no duplicate rows for ticker/date. Cleans up duplicates if found."""
         if self.db_type == "mongodb":
             try:
+                # Ensure the 'date' field is a datetime object
+                if isinstance(date, str):
+                    date = datetime.strptime(date, "%Y-%m-%d")
+
+                # Clean up any duplicate docs for ticker/date/source before upsert
+                dup_query = {"ticker": ticker, "date": date}
+                docs = list(self.price_data.find(dup_query))
+                if len(docs) > 1:
+                    # Keep the latest (by _id), remove others
+                    ids_to_remove = [doc['_id'] for doc in sorted(docs, key=lambda d: d.get('created_at', datetime.min))[:-1]]
+                    if ids_to_remove:
+                        self.price_data.delete_many({"_id": {"$in": ids_to_remove}})
                 doc = {
                     "ticker": ticker,
                     "date": date,
@@ -278,10 +301,9 @@ class DatabaseAdapter:
                     "source": source,
                     "created_at": datetime.now()
                 }
-                
                 # Upsert (update if exists, insert if not)
                 self.price_data.update_one(
-                    {"ticker": ticker, "date": date, "source": source},
+                    {"ticker": ticker, "date": date},
                     {"$set": doc},
                     upsert=True
                 )
@@ -293,8 +315,13 @@ class DatabaseAdapter:
             try:
                 conn = self._get_sqlite_conn()
                 cur = conn.cursor()
+                # Clean up any duplicate rows for ticker/date/source before insert
                 cur.execute("""
-                    INSERT OR REPLACE INTO price_data 
+                    DELETE FROM price_data
+                    WHERE ticker = ? AND date = ? 
+                """, (ticker, date))
+                cur.execute("""
+                    INSERT INTO price_data 
                     (ticker, date, open, high, low, close, volume, source, created_at)
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, (
@@ -307,6 +334,15 @@ class DatabaseAdapter:
                     source,
                     datetime.now().isoformat()
                 ))
+                conn.commit()
+                # Extra cleanup: remove any further duplicates (shouldn't happen, but for safety)
+                cur.execute("""
+                    DELETE FROM price_data
+                    WHERE rowid NOT IN (
+                        SELECT MIN(rowid) FROM price_data
+                        GROUP BY ticker, date
+                    )
+                """)
                 conn.commit()
                 return True
             except Exception as e:
@@ -365,6 +401,81 @@ class DatabaseAdapter:
     
     def __exit__(self, exc_type, exc_val, exc_tb):
         self.close()
+    
+    def delete_price_range(self, ticker: str, start_date: str, end_date: str) -> int:
+        """
+        Delete price data for a ticker within a date range.
+        Returns number of deleted rows/documents.
+        """
+        if self.db_type == "mongodb":
+            try:
+                result = self.price_data.delete_many({
+                    "ticker": ticker,
+                    "date": {"$gte": start_date, "$lte": end_date}
+                })
+                return result.deleted_count
+            except Exception as e:
+                print(f"MongoDB delete error: {e}")
+                return 0
+        else:
+            try:
+                conn = self._get_sqlite_conn()
+                cur = conn.cursor()
+                cur.execute("""
+                    DELETE FROM price_data
+                    WHERE ticker = ? AND date >= ? AND date <= ?
+                """, (ticker, start_date, end_date))
+                deleted_rows = cur.rowcount
+                conn.commit()
+                return deleted_rows
+            except Exception as e:
+                print(f"SQLite delete error: {e}")
+                return 0
+    
+    def load_price_range_multi(self, tickers, start_date, end_date):
+        """
+        Load price data for multiple tickers at once.
+        Returns a dict: {ticker: DataFrame}
+        """
+        result = {}
+        if self.db_type == "mongodb":
+            try:
+                query = {
+                    "ticker": {"$in": [t.upper() for t in tickers]},
+                    "date": {"$gte": datetime.strptime(start_date, "%Y-%m-%d"), "$lte": datetime.strptime(end_date, "%Y-%m-%d")}
+                }
+                cursor = self.price_data.find(query).sort([("date", ASCENDING)]).max_time_ms(180000)  # Added maxTimeMS for 60 seconds timeout
+                print(f"MongoDB multi-load query: {query}")
+                df = pd.DataFrame(list(cursor))
+                if not df.empty:
+                    if '_id' in df.columns:
+                        df = df.drop('_id', axis=1)
+                    df['date'] = pd.to_datetime(df['date'])
+                for t in tickers:
+                    result[t] = df[df['ticker'] == t.upper()].copy() if not df.empty else pd.DataFrame()
+                return result
+            except Exception as e:
+                print(f"MongoDB multi-load error: {e}")
+                return {t: pd.DataFrame() for t in tickers}
+        else:
+            try:
+                conn = self._get_sqlite_conn()
+                q = f"""
+                    SELECT ticker, date, open, high, low, close, volume
+                    FROM price_data
+                    WHERE ticker IN ({','.join(['?']*len(tickers))}) AND date >= ? AND date <= ?
+                    ORDER BY ticker, date
+                """
+                params = [t for t in tickers] + [start_date, end_date]
+                df = pd.read_sql_query(q, conn, params=params)
+                if not df.empty:
+                    df['date'] = pd.to_datetime(df['date'])
+                for t in tickers:
+                    result[t] = df[df['ticker'] == t].copy() if not df.empty else pd.DataFrame()
+                return result
+            except Exception as e:
+                print(f"SQLite multi-load error: {e}")
+                return {t: pd.DataFrame() for t in tickers}
 
 # Global instance (lazy-loaded)
 _db_adapter = None

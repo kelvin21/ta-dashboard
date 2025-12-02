@@ -31,6 +31,15 @@ try:
 except ImportError:
     HAS_ASYNC = False
 
+# Add db_adapter support
+try:
+    from db_adapter import get_db_adapter
+    db_adapter = get_db_adapter()
+    HAS_DB_ADAPTER = True
+except Exception:
+    db_adapter = None
+    HAS_DB_ADAPTER = False
+
 
 async def fetch_page_async(session, symbol, page_num, page_size, head_index):
     """Async function to fetch a single page of intraday data."""
@@ -172,50 +181,46 @@ def convert_to_ohlcv(df, interval='1D', scale_price=True):
 def detect_price_adjustment(ticker, db_path, debug=False):
     """
     Compare yesterday's price in database with freshly fetched data to detect adjustments.
-    
-    Args:
-        ticker: Stock ticker symbol
-        db_path: Path to SQLite database
-        debug: Print debug information
-    
-    Returns:
-        Tuple of (needs_adjustment: bool, adjustment_ratio: float, yesterday_date: str, old_close: float, new_close: float)
+    Returns: (needs_adjustment: bool, adjustment_ratio: float, yesterday_date: str, old_close: float, new_close: float)
     """
-    # Calculate yesterday's date
     today = datetime.now().date()
     yesterday = today - timedelta(days=1)
     yesterday_str = yesterday.strftime('%Y-%m-%d')
-    
     if debug:
         print(f"Checking price adjustment for {ticker} on {yesterday_str}...")
-    
+
     # Step 1: Get yesterday's price from database (existing old data)
+    old_close = 0
     try:
-        conn = sqlite3.connect(db_path)
-        cursor = conn.cursor()
-        
-        cursor.execute("""
-            SELECT close FROM price_data 
-            WHERE ticker = ? AND date = ?
-            ORDER BY ROWID DESC
-            LIMIT 1
-        """, (ticker, yesterday_str))
-        
-        result = cursor.fetchone()
-        conn.close()
-        
-        if not result:
-            if debug:
-                print(f"  No existing data for {yesterday_str}")
-            return (False, 1.0, yesterday_str, 0, 0)
-        
-        old_close = float(result[0])
-        
+        if HAS_DB_ADAPTER and getattr(db_adapter, "db_type", None) == "mongodb":
+            df = db_adapter.load_price_range(ticker, yesterday_str, yesterday_str)
+            if not df.empty:
+                old_close = float(df.iloc[-1]['close'])
+            else:
+                if debug:
+                    print(f"  No existing data for {yesterday_str}")
+                return (False, 1.0, yesterday_str, 0, 0)
+        else:
+            conn = sqlite3.connect(db_path)
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT close FROM price_data 
+                WHERE ticker = ? AND date = ?
+                ORDER BY ROWID DESC
+                LIMIT 1
+            """, (ticker, yesterday_str))
+            result = cursor.fetchone()
+            conn.close()
+            if not result:
+                if debug:
+                    print(f"  No existing data for {yesterday_str}")
+                return (False, 1.0, yesterday_str, 0, 0)
+            old_close = float(result[0])
     except Exception as e:
         if debug:
             print(f"  Error reading from database: {e}")
         return (False, 1.0, yesterday_str, 0, 0)
-    
+
     # Step 2: Fetch fresh data for yesterday from TCBS (do NOT query from database)
     try:
         # Use TCBS stock history API to get yesterday's data directly
@@ -268,44 +273,38 @@ def detect_price_adjustment(ticker, db_path, debug=False):
 def apply_price_adjustment(ticker, adjustment_ratio, adjustment_date, db_path, debug=False):
     """
     Apply price adjustment to historical data before the adjustment date.
-    
-    Args:
-        ticker: Stock ticker symbol
-        adjustment_ratio: Ratio to multiply historical prices (new_price / old_price)
-        adjustment_date: Date of adjustment (YYYY-MM-DD)
-        db_path: Path to SQLite database
-        debug: Print debug information
-    
-    Returns:
-        Number of rows adjusted
+    Returns: Number of rows adjusted
     """
     if debug:
         print(f"Applying adjustment ratio {adjustment_ratio:.6f} to {ticker} before {adjustment_date}...")
-    
     try:
-        conn = sqlite3.connect(db_path)
-        cursor = conn.cursor()
-        
-        # Update all prices before the adjustment date
-        cursor.execute("""
-            UPDATE price_data 
-            SET open = open * ?,
-                high = high * ?,
-                low = low * ?,
-                close = close * ?
-            WHERE ticker = ? AND date < ?
-        """, (adjustment_ratio, adjustment_ratio, adjustment_ratio, adjustment_ratio, 
-              ticker, adjustment_date))
-        
-        rows_affected = cursor.rowcount
-        conn.commit()
-        conn.close()
-        
-        if debug:
-            print(f"  ✓ Adjusted {rows_affected} historical rows")
-        
-        return rows_affected
-        
+        if HAS_DB_ADAPTER and getattr(db_adapter, "db_type", None) == "mongodb":
+            # MongoDB: update all docs before adjustment_date
+            result = db_adapter.price_data.update_many(
+                {"ticker": ticker, "date": {"$lt": adjustment_date}},
+                {"$mul": {"open": adjustment_ratio, "high": adjustment_ratio, "low": adjustment_ratio, "close": adjustment_ratio}}
+            )
+            rows_affected = result.modified_count
+            if debug:
+                print(f"  ✓ Adjusted {rows_affected} historical rows (MongoDB)")
+            return rows_affected
+        else:
+            conn = sqlite3.connect(db_path)
+            cursor = conn.cursor()
+            cursor.execute("""
+                UPDATE price_data 
+                SET open = open * ?,
+                    high = high * ?,
+                    low = low * ?,
+                    close = close * ?
+                WHERE ticker = ? AND date < ?
+            """, (adjustment_ratio, adjustment_ratio, adjustment_ratio, adjustment_ratio, ticker, adjustment_date))
+            rows_affected = cursor.rowcount
+            conn.commit()
+            conn.close()
+            if debug:
+                print(f"  ✓ Adjusted {rows_affected} historical rows")
+            return rows_affected
     except Exception as e:
         if debug:
             print(f"  ✗ Error applying adjustment: {e}")
@@ -371,58 +370,65 @@ def update_intraday_ohlcv(ticker, db_path, interval='1D', source='intraday', sca
     ohlcv['ticker'] = ticker
     ohlcv['source'] = source
     ohlcv['date'] = ohlcv['datetime'].dt.strftime('%Y-%m-%d')
-    
-    # Select only the columns we need
     db_cols = ['ticker', 'date', 'open', 'high', 'low', 'close', 'volume', 'source']
     ohlcv_db = ohlcv[db_cols].copy()
-    
-    # Update database
+    rows_affected = 0
     try:
-        conn = sqlite3.connect(db_path)
-        cursor = conn.cursor()
-        
-        rows_affected = 0
-        
-        for _, row in ohlcv_db.iterrows():
-            # Check if record exists
-            cursor.execute("""
-                SELECT COUNT(*) FROM price_data 
-                WHERE ticker = ? AND date = ? AND source = ?
-            """, (row['ticker'], row['date'], row['source']))
-            
-            exists = cursor.fetchone()[0] > 0
-            
-            if exists:
-                # Update existing record
+        if HAS_DB_ADAPTER and getattr(db_adapter, "db_type", None) == "mongodb":
+            for _, row in ohlcv_db.iterrows():
+                ohlcv_dict = {
+                    'open': row['open'],
+                    'high': row['high'],
+                    'low': row['low'],
+                    'close': row['close'],
+                    'volume': int(row['volume'])
+                }
+                ok = db_adapter.insert_price_data(
+                    ticker=row['ticker'],
+                    date=row['date'],
+                    ohlcv=ohlcv_dict,
+                    source=row['source']
+                )
+                if ok:
+                    rows_affected += 1
+                    if debug:
+                        print(f"  Upserted {row['date']}: O={row['open']:.1f} H={row['high']:.1f} L={row['low']:.1f} C={row['close']:.1f} V={row['volume']:,.0f}")
+            return (True, f"Updated {len(ohlcv_db)} OHLCV bar(s) for {ticker}", rows_affected)
+        else:
+            conn = sqlite3.connect(db_path)
+            cursor = conn.cursor()
+            for _, row in ohlcv_db.iterrows():
                 cursor.execute("""
-                    UPDATE price_data 
-                    SET open = ?, high = ?, low = ?, close = ?, volume = ?
+                    SELECT COUNT(*) FROM price_data 
                     WHERE ticker = ? AND date = ? AND source = ?
-                """, (
-                    row['open'], row['high'], row['low'], row['close'], row['volume'],
-                    row['ticker'], row['date'], row['source']
-                ))
-                rows_affected += cursor.rowcount
-                if debug:
-                    print(f"  Updated {row['date']}: O={row['open']:.1f} H={row['high']:.1f} L={row['low']:.1f} C={row['close']:.1f} V={row['volume']:,.0f}")
-            else:
-                # Insert new record
-                cursor.execute("""
-                    INSERT INTO price_data (ticker, date, open, high, low, close, volume, source)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                """, (
-                    row['ticker'], row['date'], row['open'], row['high'], row['low'], 
-                    row['close'], row['volume'], row['source']
-                ))
-                rows_affected += cursor.rowcount
-                if debug:
-                    print(f"  Inserted {row['date']}: O={row['open']:.1f} H={row['high']:.1f} L={row['low']:.1f} C={row['close']:.1f} V={row['volume']:,.0f}")
-        
-        conn.commit()
-        conn.close()
-        
-        return (True, f"Updated {len(ohlcv_db)} OHLCV bar(s) for {ticker}", rows_affected)
-        
+                """, (row['ticker'], row['date'], row['source']))
+                exists = cursor.fetchone()[0] > 0
+                if exists:
+                    cursor.execute("""
+                        UPDATE price_data 
+                        SET open = ?, high = ?, low = ?, close = ?, volume = ?
+                        WHERE ticker = ? AND date = ? AND source = ?
+                    """, (
+                        row['open'], row['high'], row['low'], row['close'], row['volume'],
+                        row['ticker'], row['date'], row['source']
+                    ))
+                    rows_affected += cursor.rowcount
+                    if debug:
+                        print(f"  Updated {row['date']}: O={row['open']:.1f} H={row['high']:.1f} L={row['low']:.1f} C={row['close']:.1f} V={row['volume']:,.0f}")
+                else:
+                    cursor.execute("""
+                        INSERT INTO price_data (ticker, date, open, high, low, close, volume, source)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    """, (
+                        row['ticker'], row['date'], row['open'], row['high'], row['low'], 
+                        row['close'], row['volume'], row['source']
+                    ))
+                    rows_affected += cursor.rowcount
+                    if debug:
+                        print(f"  Inserted {row['date']}: O={row['open']:.1f} H={row['high']:.1f} L={row['low']:.1f} C={row['close']:.1f} V={row['volume']:,.0f}")
+            conn.commit()
+            conn.close()
+            return (True, f"Updated {len(ohlcv_db)} OHLCV bar(s) for {ticker}", rows_affected)
     except Exception as e:
         return (False, f"Database error: {e}", 0)
 
