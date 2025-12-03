@@ -27,7 +27,7 @@ try:
     
     # Verify what was loaded
     print(f"✓ After load_dotenv():")
-    print(f"  USE_MONGODB: {os.getenv('USE_MONGODB', 'NOT SET')}")
+    print(f"  USE_MONGODB: {os.getenv('USE_MONGODB', 'true')}")
     mongodb_uri = os.getenv('MONGODB_URI', '')
     if mongodb_uri:
         print(f"  MONGODB_URI: SET (length: {len(mongodb_uri)})")
@@ -217,6 +217,12 @@ class DatabaseAdapter:
                 """)
                 conn.commit()
                 conn.close()
+    
+    def _get_sqlite_conn(self):
+        """Get SQLite connection (lazy loading)."""
+        if self.conn is None:
+            self.conn = sqlite3.connect(self.db_path)
+        return self.conn
     
     def get_all_tickers(self, debug=False) -> List[str]:
         """Get list of all unique tickers."""
