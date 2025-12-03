@@ -495,9 +495,10 @@ class DatabaseAdapter:
         """Get a user setting value."""
         if self.db_type == "mongodb":
             try:
-                doc = self.db.user_settings.find_one({"key": key})
+                doc = self.user_settings.find_one({"key": key})
                 return doc.get("value", "") if doc else ""
-            except Exception:
+            except Exception as e:
+                print(f"MongoDB get_setting error: {e}")
                 return ""
         else:
             try:
@@ -506,20 +507,22 @@ class DatabaseAdapter:
                 cur.execute("SELECT value FROM user_settings WHERE key = ?", (key,))
                 row = cur.fetchone()
                 return row[0] if row else ""
-            except Exception:
+            except Exception as e:
+                print(f"SQLite get_setting error: {e}")
                 return ""
     
     def set_setting(self, key: str, value: str) -> bool:
         """Set a user setting value."""
         if self.db_type == "mongodb":
             try:
-                self.db.user_settings.update_one(
+                self.user_settings.update_one(
                     {"key": key},
-                    {"$set": {"value": value}},
+                    {"$set": {"value": value, "updated_at": datetime.now()}},
                     upsert=True
                 )
                 return True
-            except Exception:
+            except Exception as e:
+                print(f"MongoDB set_setting error: {e}")
                 return False
         else:
             try:
@@ -531,7 +534,8 @@ class DatabaseAdapter:
                 """, (key, value))
                 conn.commit()
                 return True
-            except Exception:
+            except Exception as e:
+                print(f"SQLite set_setting error: {e}")
                 return False
     
     def save_overview_cache(self, cache_key: str, df_data: pd.DataFrame) -> bool:
@@ -631,4 +635,12 @@ def get_db_adapter() -> DatabaseAdapter:
     global _db_adapter
     if _db_adapter is None:
         _db_adapter = DatabaseAdapter()
+        # Verify the adapter has required methods and attributes
+        required_methods = ['get_setting', 'set_setting', 'get_all_tickers', 'load_price_range', 'load_price_range_multi', 'save_overview_cache', 'get_overview_cache', 'clear_overview_cache']
+        for method in required_methods:
+            if not hasattr(_db_adapter, method):
+                print(f"⚠️ WARNING: DatabaseAdapter missing method: {method}")
+        
+        # Verify db_type is set correctly
+        print(f"✓ DatabaseAdapter initialized with db_type: {_db_adapter.db_type}")
     return _db_adapter
