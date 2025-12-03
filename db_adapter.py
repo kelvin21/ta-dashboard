@@ -125,6 +125,7 @@ class DatabaseAdapter:
                 self.price_data = self.db.price_data
                 self.market_data = self.db.market_data
                 self.tcbs_scaling = self.db.tcbs_scaling
+                self.user_settings = self.db.user_settings
                 
                 # Create indexes
                 self._create_mongo_indexes()
@@ -146,30 +147,6 @@ class DatabaseAdapter:
             
             # Auto-initialize database if it doesn't exist
             self._ensure_sqlite_initialized()
-    
-    def _ensure_sqlite_initialized(self):
-        """Ensure SQLite database exists and has required tables."""
-        try:
-            from init_database import create_empty_database
-            create_empty_database(self.db_path)
-        except Exception as e:
-            # If initialization fails, create minimal schema
-            if not os.path.exists(self.db_path):
-                conn = sqlite3.connect(self.db_path)
-                cur = conn.cursor()
-                cur.execute("""
-                    CREATE TABLE IF NOT EXISTS price_data (
-                        ticker TEXT NOT NULL,
-                        date TEXT NOT NULL,
-                        open REAL, high REAL, low REAL, close REAL,
-                        volume INTEGER,
-                        source TEXT DEFAULT 'manual',
-                        created_at TEXT,
-                        PRIMARY KEY (ticker, date)  -- Ensure ticker and date combination is unique
-                    )
-                """)
-                conn.commit()
-                conn.close()
     
     def _create_mongo_indexes(self):
         """Create MongoDB indexes for performance and uniqueness."""
@@ -204,11 +181,42 @@ class DatabaseAdapter:
             print(f"❌ Failed to create indexes: {e}")
             raise
     
-    def _get_sqlite_conn(self):
-        """Get SQLite connection (lazy loading)."""
-        if self.conn is None:
-            self.conn = sqlite3.connect(self.db_path)
-        return self.conn
+    def _ensure_sqlite_initialized(self):
+        """Ensure SQLite database exists and has required tables."""
+        try:
+            from init_database import create_empty_database
+            create_empty_database(self.db_path)
+        except Exception as e:
+            # If initialization fails, create minimal schema
+            if not os.path.exists(self.db_path):
+                conn = sqlite3.connect(self.db_path)
+                cur = conn.cursor()
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS price_data (
+                        ticker TEXT NOT NULL,
+                        date TEXT NOT NULL,
+                        open REAL, high REAL, low REAL, close REAL,
+                        volume INTEGER,
+                        source TEXT DEFAULT 'manual',
+                        created_at TEXT,
+                        PRIMARY KEY (ticker, date)
+                    )
+                """)
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS user_settings (
+                        key TEXT PRIMARY KEY,
+                        value TEXT
+                    )
+                """)
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS overview_cache (
+                        cache_key TEXT PRIMARY KEY,
+                        data TEXT,
+                        created_at TEXT
+                    )
+                """)
+                conn.commit()
+                conn.close()
     
     def get_all_tickers(self, debug=False) -> List[str]:
         """Get list of all unique tickers."""
@@ -476,6 +484,138 @@ class DatabaseAdapter:
             except Exception as e:
                 print(f"SQLite multi-load error: {e}")
                 return {t: pd.DataFrame() for t in tickers}
+    
+    def get_setting(self, key: str) -> str:
+        """Get a user setting value."""
+        if self.db_type == "mongodb":
+            try:
+                doc = self.db.user_settings.find_one({"key": key})
+                return doc.get("value", "") if doc else ""
+            except Exception:
+                return ""
+        else:
+            try:
+                conn = self._get_sqlite_conn()
+                cur = conn.cursor()
+                cur.execute("SELECT value FROM user_settings WHERE key = ?", (key,))
+                row = cur.fetchone()
+                return row[0] if row else ""
+            except Exception:
+                return ""
+    
+    def set_setting(self, key: str, value: str) -> bool:
+        """Set a user setting value."""
+        if self.db_type == "mongodb":
+            try:
+                self.db.user_settings.update_one(
+                    {"key": key},
+                    {"$set": {"value": value}},
+                    upsert=True
+                )
+                return True
+            except Exception:
+                return False
+        else:
+            try:
+                conn = self._get_sqlite_conn()
+                cur = conn.cursor()
+                cur.execute("""
+                    INSERT OR REPLACE INTO user_settings (key, value)
+                    VALUES (?, ?)
+                """, (key, value))
+                conn.commit()
+                return True
+            except Exception:
+                return False
+    
+    def save_overview_cache(self, cache_key: str, df_data: pd.DataFrame) -> bool:
+        """Save overview table data to cache."""
+        if self.db_type == "mongodb":
+            try:
+                import json
+                json_data = df_data.to_json(orient='records', date_format='iso')
+                self.db.overview_cache.update_one(
+                    {"cache_key": cache_key},
+                    {"$set": {"data": json_data, "created_at": datetime.now()}},
+                    upsert=True
+                )
+                return True
+            except Exception as e:
+                print(f"MongoDB save overview cache error: {e}")
+                return False
+        else:
+            try:
+                conn = self._get_sqlite_conn()
+                cur = conn.cursor()
+                import json
+                json_data = df_data.to_json(orient='records', date_format='iso')
+                cur.execute("""
+                    INSERT OR REPLACE INTO overview_cache (cache_key, data, created_at)
+                    VALUES (?, ?, ?)
+                """, (cache_key, json_data, datetime.now().isoformat()))
+                conn.commit()
+                return True
+            except Exception as e:
+                print(f"SQLite save overview cache error: {e}")
+                return False
+    
+    def get_overview_cache(self, cache_key: str) -> pd.DataFrame:
+        """Retrieve overview table data from cache."""
+        if self.db_type == "mongodb":
+            try:
+                doc = self.db.overview_cache.find_one({"cache_key": cache_key})
+                if doc and "data" in doc:
+                    import json
+                    data = json.loads(doc["data"])
+                    df = pd.DataFrame(data)
+                    # Convert date columns back to datetime
+                    for col in df.columns:
+                        if "date" in col.lower():
+                            df[col] = pd.to_datetime(df[col], errors='coerce')
+                    return df
+                return pd.DataFrame()
+            except Exception as e:
+                print(f"MongoDB get overview cache error: {e}")
+                return pd.DataFrame()
+        else:
+            try:
+                conn = self._get_sqlite_conn()
+                cur = conn.cursor()
+                cur.execute("SELECT data FROM overview_cache WHERE cache_key = ?", (cache_key,))
+                row = cur.fetchone()
+                if row:
+                    import json
+                    data = json.loads(row[0])
+                    df = pd.DataFrame(data)
+                    # Convert date columns back to datetime
+                    for col in df.columns:
+                        if "date" in col.lower():
+                            df[col] = pd.to_datetime(df[col], errors='coerce')
+                    return df
+                return pd.DataFrame()
+            except Exception as e:
+                print(f"SQLite get overview cache error: {e}")
+                return pd.DataFrame()
+    
+    def clear_overview_cache(self) -> bool:
+        """Clear all overview cache entries."""
+        if self.db_type == "mongodb":
+            try:
+                self.db.overview_cache.delete_many({})
+                return True
+            except Exception as e:
+                print(f"MongoDB clear overview cache error: {e}")
+                return False
+        else:
+            try:
+                conn = self._get_sqlite_conn()
+                cur = conn.cursor()
+                cur.execute("DELETE FROM overview_cache")
+                conn.commit()
+                return True
+            except Exception as e:
+                print(f"SQLite clear overview cache error: {e}")
+                return False
 
 # Global instance (lazy-loaded)
 _db_adapter = None

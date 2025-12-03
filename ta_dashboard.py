@@ -460,10 +460,40 @@ def _overview_row(t, df, lookback, debug):
     vol_ratio = adjusted_current_vol / avg_vol if avg_vol > 0 else 1.0
 
     score = 0.5*stage_score(stageD) + 0.3*stage_score(stageW) + 0.2*stage_score(stageM)
+    
+    # Calculate MACD slope (momentum indicator)
+    macd_slope_3d = np.nan
+    macd_slope_from_peak = np.nan
+    
+    if len(histD) >= 3:
+        # Slope from last 3 days
+        recent_3d = histD.tail(3).dropna()
+        if len(recent_3d) >= 2:
+            x = np.arange(len(recent_3d))
+            y = recent_3d.values
+            macd_slope_3d = np.polyfit(x, y, 1)[0]
+    
+    if len(histD) >= 5:
+        # Slope from last significant peak/trough to now
+        recent_hist = histD.tail(5).dropna()
+        if len(recent_hist) >= 2:
+            # Find the peak or trough in the recent window
+            if stageD in ["1. Troughing", "6. Falling below Zero"]:
+                # We're in a trough/falling phase - find the peak
+                peak_idx = np.argmax(recent_hist.values)
+            else:
+                # We're in a peak/rising phase - find the trough
+                peak_idx = np.argmin(recent_hist.values)
+            
+            if peak_idx < len(recent_hist) - 1:
+                x = np.arange(len(recent_hist) - peak_idx)
+                y = recent_hist.values[peak_idx:]
+                macd_slope_from_peak = np.polyfit(x, y, 1)[0]
+    
     return {
         "Ticker": t,
         "Close": f"{close:.1f}",
-        "Latest Date": latest_date.strftime("%Y-%m-%d"),  # Add the latest bar date
+        "Latest Date": latest_date.strftime("%Y-%m-%d"),
         "Trend (Daily)": stageD,
         "Trend (Weekly)": stageW,
         "Trend (Monthly)": stageM,
@@ -471,6 +501,8 @@ def _overview_row(t, df, lookback, debug):
         "MACD_Hist_Daily": f"{histD_val:.2f}" if not np.isnan(histD_val) else "",
         "MACD_Hist_Weekly": f"{histW_val:.2f}" if not np.isnan(histW_val) else "",
         "MACD_Hist_Monthly": f"{histM_val:.2f}" if not np.isnan(histM_val) else "",
+        "MACD_Slope_3d": f"{macd_slope_3d:.4f}" if not np.isnan(macd_slope_3d) else "",
+        "MACD_Slope_Peak": f"{macd_slope_from_peak:.4f}" if not np.isnan(macd_slope_from_peak) else "",
         "Vol/AvgVol": f"{vol_ratio:.1f}x",
         "Signal": signal_note
     }
@@ -699,6 +731,19 @@ def style_macd_by_trend(val, trend):
     }
     return colors.get(prefix, "")
 
+def style_macd_slope(val):
+    """Style MACD slope cell - green for positive, red for negative."""
+    try:
+        slope = float(val)
+        if slope > 0.001:
+            return "background-color: #66bb6a; color: white"  # Green for positive slope
+        elif slope < -0.001:
+            return "background-color: #ff5252; color: white"  # Red for negative slope
+        else:
+            return "background-color: #f5f5f5; color: black"  # Gray for near-zero
+    except Exception:
+        return ""
+
 def plot_multi_tf_macd(ticker, start_date, end_date, lookback):
     """Plot candlestick + MACD histograms for daily/weekly/monthly in subplots."""
     df = load_price_range(ticker, start_date, end_date)
@@ -814,11 +859,67 @@ if sidebar.button("Clear cache & reload"):
     try:
         load_price_range.clear()
         get_all_tickers.clear()
-        st.success("Cache cleared")
-    except Exception:
-        pass
+        # Clear overview cache from database
+        if HAS_DB_ADAPTER:
+            db.clear_overview_cache()
+            st.success("✅ Cache cleared (including database cache)")
+        else:
+            st.success("✅ Cache cleared")
+    except Exception as e:
+        st.error(f"Error clearing cache: {e}")
 
 all_tickers = get_all_tickers(debug=debug)
+
+# New: Load include/exclude tickers from database
+if HAS_DB_ADAPTER:
+    include_tickers_db = db.get_setting("include_tickers")
+    exclude_tickers_db = db.get_setting("exclude_tickers")
+else:
+    include_tickers_db = ""
+    exclude_tickers_db = ""
+
+# New: Add text boxes for filtering tickers
+include_tickers_input = sidebar.text_area(
+    "Include Tickers (comma-separated)", 
+    value=include_tickers_db,
+    placeholder="e.g., FPT, VCB, DCM",
+    help="Only display these tickers in the overview table. Leave empty to include all."
+)
+exclude_tickers_input = sidebar.text_area(
+    "Exclude Tickers (comma-separated)", 
+    value=exclude_tickers_db,
+    placeholder="e.g., VIC, HPG",
+    help="Exclude these tickers from the overview table. Leave empty to exclude none."
+)
+
+# Parse the include and exclude tickers
+include_tickers = [t.strip().upper() for t in include_tickers_input.split(",") if t.strip()]
+exclude_tickers = [t.strip().upper() for t in exclude_tickers_input.split(",") if t.strip()]
+
+# New: Save settings button
+if sidebar.button("💾 Save Ticker Filters"):
+    if HAS_DB_ADAPTER:
+        try:
+            success1 = db.set_setting("include_tickers", include_tickers_input)
+            success2 = db.set_setting("exclude_tickers", exclude_tickers_input)
+            if success1 and success2:
+                st.success("✅ Ticker filters saved!")
+            else:
+                st.error("❌ Failed to save ticker filters.")
+                if not success1:
+                    st.error("❌ Failed to save include_tickers.")
+                if not success2:
+                    st.error("❌ Failed to save exclude_tickers.")
+                # Additional debug info
+                st.write(f"[DEBUG] include_tickers_input: '{include_tickers_input}'")
+                st.write(f"[DEBUG] exclude_tickers_input: '{exclude_tickers_input}'")
+                st.write(f"[DEBUG] HAS_DB_ADAPTER: {HAS_DB_ADAPTER}")
+                st.write(f"[DEBUG] db type: {type(db)}")
+        except Exception as e:
+            st.error(f"❌ Exception while saving ticker filters: {e}")
+            st.write(f"[DEBUG] Exception details: {str(e)}")
+    else:
+        st.warning("⚠️ Database adapter not available. Settings not saved.")
 
 days_back = sidebar.number_input("Days back for analysis", min_value=365, max_value=10000, value=3000)
 lookback = sidebar.slider("Lookback (bars) for trough/peak detection", 5, 60, 20)
@@ -1507,15 +1608,50 @@ with sidebar.expander("🔧 Admin: Manage Tickers", expanded=False):
 # --- Always build overview ---------------------------------------------------
 with st.spinner("Building overview for tickers in DB..."):
     tickers = all_tickers
+
+    # Apply include/exclude filters
+    if include_tickers:
+        tickers = [t for t in tickers if t in include_tickers]
+    if exclude_tickers:
+        tickers = [t for t in tickers if t not in exclude_tickers]
+
     # Use cached overview if available and date range matches
     cache_key = f"overview_{start_date}_{end_date}_{lookback}_{len(tickers)}"
     df_over = st.session_state.get(cache_key, None)
+    
     if df_over is None:
-        if not tickers:
-            df_over = pd.DataFrame()
-        else:
-            df_over = build_overview(tickers, start_date.strftime("%Y-%m-%d"), end_date.strftime("%Y-%m-%d"), lookback=lookback, max_rows=len(tickers), debug=debug)
-            st.write(f"[DEBUG] Built overview with {len(df_over)} rows for {len(tickers)} tickers")
+        # Try to get from database cache
+        if HAS_DB_ADAPTER:
+            try:
+                df_over = db.get_overview_cache(cache_key)
+                if not df_over.empty:
+                    if debug:
+                        st.write(f"[DEBUG] Loaded overview from database cache: {len(df_over)} rows")
+            except Exception as e:
+                if debug:
+                    st.write(f"[DEBUG] Error loading from database cache: {e}")
+                df_over = None
+        
+        # If not in database cache, build it
+        if df_over is None or df_over.empty:
+            if not tickers:
+                df_over = pd.DataFrame()
+            else:
+                df_over = build_overview(tickers, start_date.strftime("%Y-%m-%d"), end_date.strftime("%Y-%m-%d"), lookback=lookback, max_rows=len(tickers), debug=debug)
+                if debug:
+                    st.write(f"[DEBUG] Built overview with {len(df_over)} rows for {len(tickers)} tickers")
+                
+                # Save to database cache
+                if HAS_DB_ADAPTER and not df_over.empty:
+                    try:
+                        success = db.save_overview_cache(cache_key, df_over)
+                        if debug and success:
+                            st.write(f"[DEBUG] Saved overview to database cache with key: {cache_key}")
+                    except Exception as e:
+                        if debug:
+                            st.write(f"[DEBUG] Error saving to database cache: {e}")
+        
+        # Store in session state for current session
         st.session_state[cache_key] = df_over
 
 # Main view: always show today/overview table with current date in header
@@ -1618,6 +1754,7 @@ if df_over is None or df_over.empty:
                 for r in sample_rows:
                     st.write(r)
             # Show tickers requested for overview but not found in DB
+           
             missing_tickers = [t for t in all_tickers if t not in tickers_in_db]
             if missing_tickers:
                 st.write(f"Tickers requested but not found in DB: {missing_tickers[:10]}{' ...' if len(missing_tickers) > 10 else ''}")
@@ -1634,17 +1771,24 @@ if df_over is None or df_over.empty:
         st.write("Database file not found.")
 else:
     # Display main overview table
-    display_cols = ["Ticker","Close","Trend (Daily)","Trend (Weekly)","Trend (Monthly)","Score","MACD_Hist_Daily","MACD_Hist_Weekly","MACD_Hist_Monthly","Vol/AvgVol","Signal"]
+    display_cols = ["Ticker", "Close", "Trend (Daily)", "Trend (Weekly)", "Trend (Monthly)", "Score", "MACD_Hist_Daily", "MACD_Hist_Weekly", "MACD_Hist_Monthly", "Vol/AvgVol", "Signal"]
     
     # Add toggle option in the sidebar
     show_latest_date = sidebar.checkbox("Show Latest Date", value=False)
+    show_macd_slope = sidebar.checkbox("Show MACD Slope (Strength)", value=False)
 
     if show_latest_date:
-        display_cols.insert(2, "Latest Date")  # Insert "Latest Date" into the visible columns
+        display_cols.insert(2, "Latest Date")
+    
+    if show_macd_slope:
+        # Insert slope columns after MACD histograms
+        macd_idx = display_cols.index("MACD_Hist_Monthly") + 1
+        display_cols.insert(macd_idx, "MACD_Slope_3d")
+        display_cols.insert(macd_idx + 1, "MACD_Slope_Peak")
 
     styled = df_over[display_cols].style
     styled = styled.applymap(style_stage_column, subset=["Trend (Daily)", "Trend (Weekly)", "Trend (Monthly)"])
-    styled = styled.applymap(style_vol_ratio, subset=["Vol/AvgVol"])  # Fixed syntax error
+    styled = styled.applymap(style_vol_ratio, subset=["Vol/AvgVol"])
     
     def style_row_by_score(row):
         score = row["Score"]
@@ -1662,9 +1806,18 @@ else:
     
     styled = styled.apply(style_macd_by_trends, axis=1)
     
+    # Style MACD slope columns if visible
+    if show_macd_slope:
+        slope_cols = ["MACD_Slope_3d", "MACD_Slope_Peak"]
+        for col in slope_cols:
+            if col in display_cols:
+                styled = styled.applymap(style_macd_slope, subset=[col])
+    
     st.dataframe(styled, height=700, use_container_width=True)
     
     st.caption("📌 **Signal column:** ↗Nd = crossing up in N days | ↘Nd = crossing down in N days | ↗0d = just crossed up | ↘0d = just crossed down")
+    if show_macd_slope:
+        st.caption("📊 **MACD Slope columns:** 3d = slope from last 3 days | Peak = slope from peak/trough to now (higher = stronger momentum)")
     
     st.markdown("### 💡 Select a ticker to view detailed charts")
     selected_ticker_input = st.selectbox("Select ticker for detailed view", options=[""] + df_over['Ticker'].tolist(), index=0, key="ticker_selector")

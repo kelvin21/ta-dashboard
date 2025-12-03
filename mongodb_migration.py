@@ -222,4 +222,15 @@ if __name__ == "__main__":
     
     print("\n" + "=" * 60)
     migrate_sqlite_to_mongodb(mongo_uri=mongo_uri)
+    ta_dashboard.py
+    Modify the script to save the overview cache in the database for persistence across runs. When the "Clear cache & reload" button is clicked, clear the cache, check for missing dates, update TCBS history, and then rebuild the overview.
+    
+    ta_dashboard.py
+    Changes Made:
+    Overview Cache Persistence:
+    
+    Added functions to save and load the overview cache to/from the database using the db_adapter.
+    Clear Cache Logic:
+    
+    When the "Clear cache & reload" button is clicked, the cache is 
     print("=" * 60)
