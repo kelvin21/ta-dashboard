@@ -1,10 +1,12 @@
-# Core dependencies
+# requirements.in (Streamlit Cloud safe)
+
+# Core
 streamlit==1.28.1
 pandas==2.1.3
 numpy==1.26.2
 plotly==5.18.0
 
-# Database dependencies
+# Database
 pymongo==4.6.0
 dnspython==2.4.2
 sqlalchemy==2.0.23
@@ -14,37 +16,27 @@ python-dotenv==1.0.0
 pytz==2023.3
 requests==2.31.0
 
-# Cloud deployment dependencies
+# Cloud storage
 google-cloud-storage==2.14.0
 boto3==1.34.0
 azure-storage-blob==12.19.0
 
-# Security & secrets management
+# Security
 cryptography==41.0.7
 pydantic==2.5.2
 
-# Monitoring & logging
+# Logging
 python-json-logger==2.0.7
 
-# Optional: Performance optimization for cloud
-gunicorn==21.2.0
-waitress==2.1.2
-
-# Optional: Connection pooling & caching
+# Caching
 redis==5.0.1
 cachetools==5.3.2
 
-# Optional: For async operations
+# Async
 aiohttp==3.9.1
-asyncio-contextmanager==1.0.0
 
-# Optional: For data processing
+# Excel processing
 openpyxl==3.11.0
 
-# Technical Analysis Library
-# Note: TA-Lib requires system C libraries. 
-# For Linux/Cloud: Install build-essential first: apt-get install build-essential python3-dev
-# For Windows: Download pre-built wheel from https://www.lfd.uci.edu/~gohlke/pythonlibs/#ta-lib
-# For macOS: brew install ta-lib (requires Homebrew)
-# Uncomment below if available, otherwise app will use manual calculation fallback
-TA-Lib==0.4.28
+# IMPORTANT — Streamlit Cloud does NOT support TA-Lib
+# TA-Lib removed
