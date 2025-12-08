@@ -1,23 +1,17 @@
 [theme]
-primaryColor = "#39ff14"
-backgroundColor = "#0e1117"
-secondaryBackgroundColor = "#262730"
-textColor = "#fafafa"
-
-[server]
-headless = true
-port = 8501
-enableCORS = false
-enableXsrfProtection = true
-maxUploadSize = 200
-
-[browser]
-gatherUsageStats = false
-
-[runner]
-magicEnabled = false
-fastReruns = true
+primaryColor = "#1f77b4"
+backgroundColor = "#ffffff"
+secondaryBackgroundColor = "#f0f2f6"
+textColor = "#31333F"
+font = "sans serif"
 
 [client]
-showErrorDetails = false
+showErrorDetails = true
 toolbarMode = "minimal"
+
+[logger]
+level = "info"
+
+[server]
+maxUploadSize = 200
+enableXsrfProtection = true
