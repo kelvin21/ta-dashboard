@@ -2,8 +2,8 @@
 
 # Core
 streamlit==1.28.1
-pandas==2.1.3
-numpy==1.26.2
+pandas==2.2.2
+numpy==2.1.1
 plotly==5.18.0
 
 # Database
@@ -40,3 +40,6 @@ openpyxl==3.11.0
 
 # IMPORTANT — Streamlit Cloud does NOT support TA-Lib
 # TA-Lib removed
+
+# Add this to avoid version conflicts:
+pyarrow==15.0.0
