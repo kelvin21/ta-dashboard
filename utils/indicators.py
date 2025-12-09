@@ -204,11 +204,26 @@ def calculate_bollinger_bands(close_series: pd.Series, period: int = 20, std_dev
         import pandas_ta as ta
         df_temp = pd.DataFrame({'close': close_series})
         bbands = ta.bbands(df_temp['close'], length=period, std=std_dev)
-        return (
-            bbands[f'BBU_{period}_{std_dev}'],
-            bbands[f'BBM_{period}_{std_dev}'],
-            bbands[f'BBL_{period}_{std_dev}']
-        )
+        
+        # pandas-ta uses different column naming (handles float formatting)
+        # Try multiple possible column name formats
+        if bbands is not None and not bbands.empty:
+            # Get column names from the result
+            cols = bbands.columns.tolist()
+            # Find upper, middle, lower bands by prefix
+            upper_col = next((c for c in cols if c.startswith('BBU_')), None)
+            middle_col = next((c for c in cols if c.startswith('BBM_')), None)
+            lower_col = next((c for c in cols if c.startswith('BBL_')), None)
+            
+            if upper_col and middle_col and lower_col:
+                return (bbands[upper_col], bbands[middle_col], bbands[lower_col])
+        
+        # Fallback if pandas-ta fails
+        middle = close_series.rolling(window=period).mean()
+        std = close_series.rolling(window=period).std()
+        upper = middle + (std * std_dev)
+        lower = middle - (std * std_dev)
+        return upper, middle, lower
     else:
         # Calculate SMA
         middle = close_series.rolling(window=period).mean()
