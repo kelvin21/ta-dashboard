@@ -4,26 +4,25 @@ Provides EMA, RSI, MACD, and Bollinger Bands calculations.
 """
 import pandas as pd
 import numpy as np
-import os
 
-# Try to import TA-Lib with Streamlit Cloud workaround
+# Try to import TA-Lib and pandas-ta
 HAS_TALIB = False
+HAS_PANDAS_TA = False
+
 try:
     import talib
     HAS_TALIB = True
 except ImportError:
-    # Try runtime installation for Streamlit Cloud
-    if os.path.exists('/home/appuser'):  # Streamlit Cloud environment
-        try:
-            from .setup_talib import setup_talib
-            if setup_talib():
-                import talib
-                HAS_TALIB = True
-        except Exception as e:
-            print(f"⚠️ TA-Lib runtime setup failed: {e}")
-    
-    if not HAS_TALIB:
-        print("⚠️ TA-Lib not installed. Using pandas fallback for indicators.")
+    pass
+
+# Try pandas-ta as fallback
+if not HAS_TALIB:
+    try:
+        import pandas_ta as ta
+        HAS_PANDAS_TA = True
+        print("✓ Using pandas-ta for indicator calculations")
+    except ImportError:
+        print("⚠️ Neither TA-Lib nor pandas-ta installed. Using manual pandas calculations.")
 
 
 def calculate_ema(close_series: pd.Series, period: int) -> pd.Series:
@@ -39,6 +38,9 @@ def calculate_ema(close_series: pd.Series, period: int) -> pd.Series:
     """
     if HAS_TALIB:
         return pd.Series(talib.EMA(close_series.values, timeperiod=period), index=close_series.index)
+    elif HAS_PANDAS_TA:
+        import pandas_ta as ta
+        return ta.ema(close_series, length=period)
     else:
         return close_series.ewm(span=period, adjust=False, min_periods=period).mean()
 
@@ -56,13 +58,16 @@ def calculate_sma(close_series: pd.Series, period: int) -> pd.Series:
     """
     if HAS_TALIB:
         return pd.Series(talib.SMA(close_series.values, timeperiod=period), index=close_series.index)
+    elif HAS_PANDAS_TA:
+        import pandas_ta as ta
+        return ta.sma(close_series, length=period)
     else:
         return close_series.rolling(window=period).mean()
 
 
 def calculate_rsi(close_series: pd.Series, period: int = 14) -> pd.Series:
     """
-    Calculate RSI using TA-Lib if available, otherwise Wilder's smoothing.
+    Calculate RSI using TA-Lib if available, otherwise pandas-ta or Wilder's smoothing.
     
     Args:
         close_series: Series of closing prices
@@ -73,6 +78,9 @@ def calculate_rsi(close_series: pd.Series, period: int = 14) -> pd.Series:
     """
     if HAS_TALIB:
         return pd.Series(talib.RSI(close_series.values, timeperiod=period), index=close_series.index)
+    elif HAS_PANDAS_TA:
+        import pandas_ta as ta
+        return ta.rsi(close_series, length=period)
     else:
         return _calculate_rsi_manual(close_series, period)
 
@@ -141,6 +149,15 @@ def calculate_macd(close_series: pd.Series, fast: int = 12, slow: int = 26, sign
             pd.Series(signal_line, index=close_series.index),
             pd.Series(hist, index=close_series.index)
         )
+    elif HAS_PANDAS_TA:
+        import pandas_ta as ta
+        df_temp = pd.DataFrame({'close': close_series})
+        macd_result = ta.macd(df_temp['close'], fast=fast, slow=slow, signal=signal)
+        return (
+            macd_result[f'MACD_{fast}_{slow}_{signal}'],
+            macd_result[f'MACDs_{fast}_{slow}_{signal}'],
+            macd_result[f'MACDh_{fast}_{slow}_{signal}']
+        )
     else:
         # Calculate EMAs using adjust=False to match AmiBroker
         ema_fast = close_series.ewm(span=fast, adjust=False, min_periods=fast).mean()
@@ -182,6 +199,15 @@ def calculate_bollinger_bands(close_series: pd.Series, period: int = 20, std_dev
             pd.Series(upper, index=close_series.index),
             pd.Series(middle, index=close_series.index),
             pd.Series(lower, index=close_series.index)
+        )
+    elif HAS_PANDAS_TA:
+        import pandas_ta as ta
+        df_temp = pd.DataFrame({'close': close_series})
+        bbands = ta.bbands(df_temp['close'], length=period, std=std_dev)
+        return (
+            bbands[f'BBU_{period}_{std_dev}'],
+            bbands[f'BBM_{period}_{std_dev}'],
+            bbands[f'BBL_{period}_{std_dev}']
         )
     else:
         # Calculate SMA
