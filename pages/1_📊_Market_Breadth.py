@@ -37,19 +37,15 @@ try:
         detect_macd_stage, categorize_macd_stage, get_all_macd_stages,
         get_macd_stage_color, get_macd_stage_display_name
     )
-    from utils.db_async import get_sync_db_adapter, AsyncDatabaseAdapter
+    from utils.db_async import get_sync_db_adapter
     USE_UTILS = True
 except ImportError as e:
     st.error(f"Failed to import utility modules: {e}")
     st.info("Please ensure utils/ directory exists with indicators.py, macd_stage.py, and db_async.py")
     st.stop()
 
-# Check if motor is available for async processing
-try:
-    from motor.motor_asyncio import AsyncIOMotorClient
-    HAS_MOTOR = True
-except ImportError:
-    HAS_MOTOR = False
+# Use synchronous database adapter (motor not supported on Streamlit Cloud)
+HAS_MOTOR = False
 
 # Import from main dashboard (for compatibility)
 try:

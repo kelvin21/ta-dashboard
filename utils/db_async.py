@@ -9,13 +9,8 @@ from typing import List, Dict, Optional
 import pandas as pd
 import numpy as np
 
-# Try to import motor for async MongoDB
-try:
-    from motor.motor_asyncio import AsyncIOMotorClient
-    HAS_MOTOR = True
-except ImportError:
-    HAS_MOTOR = False
-    print("⚠️ motor not installed. Install with: pip install motor")
+# motor not supported on Streamlit Cloud - use SyncDatabaseAdapter instead
+HAS_MOTOR = False
 
 # Try to import pymongo for synchronous fallback
 try:
@@ -40,21 +35,10 @@ class AsyncDatabaseAdapter:
         Args:
             connection_string: MongoDB URI (defaults to env variable)
         """
-        if not HAS_MOTOR:
-            raise ImportError("motor not installed. Run: pip install motor")
-        
-        mongo_uri = connection_string or os.getenv("MONGODB_URI")
-        if not mongo_uri:
-            raise ValueError("MongoDB URI not found in environment")
-        
-        # Add timeout options
-        if "?" in mongo_uri:
-            mongo_uri += "&"
-        else:
-            mongo_uri += "?"
-        mongo_uri += "socketTimeoutMS=60000&connectTimeoutMS=60000"
-        
-        self.client = AsyncIOMotorClient(mongo_uri)
+        raise ImportError(
+            "AsyncDatabaseAdapter requires motor which is not supported on Streamlit Cloud. " +
+            "Use SyncDatabaseAdapter instead: from utils.db_async import get_sync_db_adapter"
+        )
         db_name = os.getenv("MONGODB_DB_NAME", "macd_reversal")
         self.db = self.client[db_name]
         
