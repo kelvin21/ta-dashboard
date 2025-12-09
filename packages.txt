@@ -1,4 +1,1 @@
-build-essential
-wget
-gcc
-make
+# No system packages needed - using pandas-ta instead of TA-Lib
