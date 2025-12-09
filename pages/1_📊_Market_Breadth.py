@@ -1,1730 +1,1351 @@
-import streamlit as st
+"""
+Market Breadth Analysis Page
+Comprehensive market breadth indicators for VN Market using MongoDB data.
+Based on specification from MARKET_BREADTH_README.md
+"""
 import os
 import sys
-
-# Check if page should be visible
-if os.getenv("SHOW_MARKET_BREADTH_PAGE", "true").lower() == "false":
-    st.error("This page is not available in the current deployment.")
-    st.stop()
-
-import sqlite3
+from pathlib import Path
+import asyncio
+from typing import List, Dict, Tuple, Optional
+import streamlit as st
 import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
-import asyncio
 
-# Try to import TA-Lib
+# Add parent directory to path
+SCRIPT_DIR = Path(__file__).parent.parent
+if str(SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_DIR))
+
+# Load environment
 try:
-    import talib
-    HAS_TALIB = True
+    from dotenv import load_dotenv
+    load_dotenv()
 except ImportError:
-    HAS_TALIB = False
+    pass
 
-# Add parent directory to path to import shared modules
-SCRIPT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-if SCRIPT_DIR not in sys.path:
-    sys.path.insert(0, SCRIPT_DIR)
+# Import utilities
+try:
+    from utils.indicators import (
+        calculate_all_indicators, categorize_rsi, check_price_above_ema,
+        calculate_ema, calculate_rsi, calculate_macd, calculate_bollinger_bands
+    )
+    from utils.macd_stage import (
+        detect_macd_stage, categorize_macd_stage, get_all_macd_stages,
+        get_macd_stage_color, get_macd_stage_display_name
+    )
+    from utils.db_async import get_sync_db_adapter, AsyncDatabaseAdapter
+    USE_UTILS = True
+except ImportError as e:
+    st.error(f"Failed to import utility modules: {e}")
+    st.info("Please ensure utils/ directory exists with indicators.py, macd_stage.py, and db_async.py")
+    st.stop()
 
-# Try to import database adapter
+# Check if motor is available for async processing
+try:
+    from motor.motor_asyncio import AsyncIOMotorClient
+    HAS_MOTOR = True
+except ImportError:
+    HAS_MOTOR = False
+
+# Import from main dashboard (for compatibility)
 try:
     from db_adapter import get_db_adapter
-    db = get_db_adapter()
     HAS_DB_ADAPTER = True
 except ImportError:
-    db = None
     HAS_DB_ADAPTER = False
 
-# Import from main dashboard with better error handling
-try:
-    from ta_dashboard import (
-        DB_PATH, DEFAULT_LOCAL_DB, HAS_BDB,
-        load_price_range, get_all_tickers, macd_hist, detect_stage
-    )
-except ImportError as e:
-    st.error(f"""
-    ❌ Could not import required functions from ta_dashboard.py
-    
-    **Error Details:**
-    {str(e)}
-    
-    **Troubleshooting:**
-    1. Ensure ta_dashboard.py is in the parent directory (c:\\Users\\hadao\\OneDrive\\Documents\\Programming\\macd-reversal\\)
-    2. Check that ta_dashboard.py is not corrupted
-    3. Try restarting Streamlit: `streamlit run ta_dashboard.py`
-    
-    **Current Directory Structure:**
-    - Script directory: {SCRIPT_DIR}
-    - Pages directory: {os.path.dirname(os.path.abspath(__file__))}
-    - Files in script directory: {os.listdir(SCRIPT_DIR)[:10]}
-    """)
-    st.stop()
+# Page config
+st.set_page_config(page_title="Market Breadth Analysis", layout="wide", page_icon="📊")
 
-st.set_page_config(page_title="Market Breadth", layout="wide", page_icon="📊")
-st.title("📊 Market Breadth Analysis")
+# Title
+st.markdown("# 📊 Market Breadth by Indicators")
+st.markdown("Analyze market breadth across multiple technical indicators for the Vietnamese stock market")
 
-# Show TA-Lib status
-if HAS_TALIB:
-    st.info("✅ Using TA-Lib for technical indicators (most accurate)")
-else:
-    st.warning("⚠️ TA-Lib not installed. Using manual calculations. For best accuracy, install: `pip install TA-Lib`")
+# Initialize session state
+if 'calculation_status' not in st.session_state:
+    st.session_state.calculation_status = None
+if 'calculation_progress' not in st.session_state:
+    st.session_state.calculation_progress = 0
 
-# Sidebar controls
-st.sidebar.header("Analysis Settings")
-lookback = st.sidebar.slider("MACD Lookback (bars)", 5, 60, 20)
-days_back = st.sidebar.number_input("Days of history", 200, 730, 365)
-debug = st.sidebar.checkbox("Show debug info", value=False)
+# =====================================================================
+# HELPER FUNCTIONS
+# =====================================================================
 
-st.sidebar.info("💡 **Tip:** Market Breadth requires 200+ bars (≈10 months) for MA200 calculation.")
+@st.cache_resource(ttl=3600)
+def get_db():
+    """Get database adapter (cached)."""
+    return get_sync_db_adapter()
 
-# Historical data settings
-st.sidebar.markdown("---")
-st.sidebar.markdown("### 📊 Historical Charts")
-show_historical = st.sidebar.checkbox("Show historical breadth charts", value=True)
-historical_days = st.sidebar.slider("Historical period (days)", 365, 730, 548) if show_historical else 365  # ~1.5 years default
+@st.cache_data(ttl=1800)
+def get_latest_date_from_db():
+    """Get latest date from database."""
+    try:
+        db = get_db()
+        latest = db.get_latest_date()
+        return latest
+    except Exception as e:
+        st.error(f"Error getting latest date: {e}")
+        return None
 
-# Recalculate button
-if st.sidebar.button("🔄 Recalculate Historical Data", help="Recalculate and save historical market breadth data"):
-    st.session_state['recalculate_breadth'] = True
+@st.cache_data(ttl=1800)
+def get_all_tickers_cached():
+    """Get all tickers from database (cached)."""
+    try:
+        db = get_db()
+        return db.get_all_tickers()
+    except Exception as e:
+        st.error(f"Error getting tickers: {e}")
+        return []
 
-# Load all tickers
-all_tickers = get_all_tickers(debug=False)
+def load_price_data_for_ticker(ticker: str, start_date: datetime, end_date: datetime):
+    """Load price data for a single ticker."""
+    try:
+        db = get_db()
+        return db.get_price_data(ticker, start_date, end_date)
+    except Exception as e:
+        return pd.DataFrame()
 
-if not all_tickers:
-    st.warning("No tickers found in database")
-    st.stop()
-
-st.info(f"Analyzing {len(all_tickers)} tickers...")
-
-# Calculate breadth metrics
-end_date = datetime.now().date()
-start_date = end_date - timedelta(days=days_back)
-
-@st.cache_data(ttl=300)
-def calculate_breadth_metrics(tickers, start_date, end_date, lookback, debug=False):
-    """Calculate market breadth metrics for all tickers using TA-Lib if available."""
-    results = []
-    errors = []
-    skipped_reasons = {"empty": 0, "too_short": 0, "error": 0}
-    
-    for ticker in tickers:
-        try:
-            df = load_price_range(ticker, start_date, end_date)
-            
-            if df.empty:
-                skipped_reasons["empty"] += 1
-                if debug:
-                    errors.append(f"{ticker}: Empty dataframe")
-                continue
-            
-            # Sort by date in ascending order for proper calculations
-            df = df.sort_values('date', ascending=True).reset_index(drop=True)
-            
-            if len(df) < 200:  # Need at least 200 bars for MA200
-                skipped_reasons["too_short"] += 1
-                if debug:
-                    errors.append(f"{ticker}: Only {len(df)} bars (need 200+)")
-                continue
-            
-            # Get latest data - MUST BE LAST ROW after sorting ascending
-            latest = df.iloc[-1]
-            close = float(latest['close'])
-            latest_date = latest['date']
-            
-            if debug:
-                errors.append(f"{ticker}: Latest date = {latest_date}, close = {close}")
-            
-            # Calculate moving averages using TA-Lib if available
-            if HAS_TALIB:
-                try:
-                    close_array = df['close'].values.astype(np.float64)
-                    ma20 = talib.SMA(close_array, timeperiod=20)
-                    ma50 = talib.SMA(close_array, timeperiod=50)
-                    ma200 = talib.SMA(close_array, timeperiod=200)
-                    rsi = talib.RSI(close_array, timeperiod=14)
-                except Exception as e:
-                    if debug:
-                        errors.append(f"{ticker}: TA-Lib error - {str(e)}")
-                    # Fallback to manual calculation
-                    ma20 = df['close'].rolling(20).mean().values
-                    ma50 = df['close'].rolling(50).mean().values
-                    ma200 = df['close'].rolling(200).mean().values
-                    rsi = calculate_rsi_manual(df)
-            else:
-                # Manual fallback if TA-Lib not available
-                ma20 = df['close'].rolling(20).mean().values
-                ma50 = df['close'].rolling(50).mean().values
-                ma200 = df['close'].rolling(200).mean().values
-                rsi = calculate_rsi_manual(df)
-            
-            # Calculate MACD using TA-Lib if available
-            if HAS_TALIB:
-                try:
-                    close_array = df['close'].values.astype(np.float64)
-                    macd_line, macd_signal, macd_hist = talib.MACD(close_array, fastperiod=12, slowperiod=26, signalperiod=9)
-                    hist = pd.Series(macd_hist)
-                except Exception as e:
-                    if debug:
-                        errors.append(f"{ticker}: MACD TA-Lib error - {str(e)}")
-                    _, _, hist = macd_hist(df['close'].astype(float))
-            else:
-                _, _, hist = macd_hist(df['close'].astype(float))
-            
-            stage = detect_stage(hist, lookback=lookback)
-            
-            # Get latest values - MUST USE -1 INDEX FOR LATEST
-            latest_ma20 = float(ma20[-1]) if not np.isnan(ma20[-1]) else None
-            latest_ma50 = float(ma50[-1]) if not np.isnan(ma50[-1]) else None
-            latest_ma200 = float(ma200[-1]) if not np.isnan(ma200[-1]) else None
-            latest_rsi = float(rsi[-1]) if not np.isnan(rsi[-1]) else None
-            
-            results.append({
-                'ticker': ticker,
-                'date': latest_date,  # Store actual latest date
-                'close': close,
-                'above_ma20': close > latest_ma20 if latest_ma20 else None,
-                'above_ma50': close > latest_ma50 if latest_ma50 else None,
-                'above_ma200': close > latest_ma200 if latest_ma200 else None,
-                'rsi': latest_rsi,
-                'macd_stage': stage
-            })
-        except Exception as e:
-            skipped_reasons["error"] += 1
-            if debug:
-                errors.append(f"{ticker}: {str(e)[:100]}")
-            continue
-    
-    return pd.DataFrame(results), errors, skipped_reasons
-
-def calculate_rsi_manual(df, period=14):
-    """Manual RSI calculation fallback using Wilder's smoothing."""
-    delta = df['close'].diff()
-    gain = delta.where(delta > 0, 0)
-    loss = -delta.where(delta < 0, 0)
-    
-    rsi = np.zeros(len(df))
-    rsi[:] = np.nan
-    
-    if len(df) >= period:
-        avg_gain = gain.iloc[1:period+1].sum() / period
-        avg_loss = loss.iloc[1:period+1].sum() / period
+def calculate_indicators_for_ticker(ticker: str, start_date: datetime, end_date: datetime) -> pd.DataFrame:
+    """Calculate all indicators for a ticker."""
+    try:
+        # Add warmup period for indicators (200 days = ~290 calendar days)
+        warmup_days = 365  # Use 1 year warmup to ensure all indicators have enough data
+        warmup_start = start_date - timedelta(days=warmup_days)
         
-        for i in range(period, len(df)):
-            if i == period:
-                rs = avg_gain / avg_loss if avg_loss > 0 else 0
-                rsi[i] = 100 - (100 / (1 + rs)) if rs > 0 else 0
-            else:
-                avg_gain = (avg_gain * (period - 1) + gain.iloc[i]) / period
-                avg_loss = (avg_loss * (period - 1) + loss.iloc[i]) / period
-                rs = avg_gain / avg_loss if avg_loss > 0 else 0
-                rsi[i] = 100 - (100 / (1 + rs)) if rs > 0 else 0
-    
-    return rsi
-
-# --- Main dashboard code ---
-
-# Calculate breadth metrics for current snapshot
-with st.spinner("Calculating market breadth metrics..."):
-    breadth_df, errors, skipped_reasons = calculate_breadth_metrics(
-        all_tickers, 
-        start_date.strftime("%Y-%m-%d"), 
-        end_date.strftime("%Y-%m-%d"), 
-        lookback=lookback, 
-        debug=debug
-    )
-
-if breadth_df.empty:
-    st.error("⚠️ Not enough data to calculate breadth metrics")
-    
-    # Show debug information
-    st.markdown("### 🔍 Debug Information")
-    
-    col1, col2, col3, col4 = st.columns(4)
-    with col1:
-        st.metric("Total Tickers", len(all_tickers))
-    with col2:
-        st.metric("Date Range", f"{days_back} days")
-    with col3:
-        st.metric("Required Bars", "200+")
-    with col4:
-        st.metric("Start Date", start_date.strftime("%Y-%m-%d"))
-    
-    st.markdown("#### Skipped Tickers Breakdown")
-    skip_df = pd.DataFrame([
-        {"Reason": "Empty data", "Count": skipped_reasons["empty"], "Impact": f"{skipped_reasons['empty']/len(all_tickers)*100:.1f}%"},
-        {"Reason": "Too short (<200 bars)", "Count": skipped_reasons["too_short"], "Impact": f"{skipped_reasons['too_short']/len(all_tickers)*100:.1f}%"},
-        {"Reason": "Errors", "Count": skipped_reasons["error"], "Impact": f"{skipped_reasons['error']/len(all_tickers)*100:.1f}%"},
-    ])
-    st.dataframe(skip_df, width='stretch')
-    
-    if debug and errors:
-        st.markdown("#### Detailed Errors")
-        with st.expander(f"Show {len(errors)} error messages"):
-            for err in errors[:50]:
-                st.text(err)
-            if len(errors) > 50:
-                st.caption(f"... and {len(errors) - 50} more errors")
-    
-    st.stop()
-
-st.success(f"Successfully analyzed {len(breadth_df)} tickers")
-
-# Display current date - use actual latest date from data
-if not breadth_df.empty and 'date' in breadth_df.columns:
-    # Get the most recent date from all tickers
-    latest_data_date = breadth_df['date'].max()
-    current_date_str = latest_data_date.strftime("%Y-%m-%d")
-    st.markdown(f"### Market Breadth Snapshot — {current_date_str}")
-    
-    if debug:
-        st.caption(f"**Debug:** Latest dates in data:")
-        date_counts = breadth_df['date'].value_counts().sort_index(ascending=False)
-        for date, count in date_counts.head(5).items():
-            st.caption(f"  {date.strftime('%Y-%m-%d')}: {count} tickers")
-else:
-    current_date_str = datetime.now().strftime("%Y-%m-%d")
-    st.markdown(f"### Market Breadth Snapshot — {current_date_str}")
-
-# Add debug table if debug mode is enabled
-if debug and not breadth_df.empty:
-    st.markdown("---")
-    st.markdown("### 🔍 Debug: Technical Indicators by Ticker")
-    
-    # Load detailed data for debug table
-    debug_data = []
-    with st.spinner("Loading detailed indicator data for debug..."):
-        for ticker in breadth_df['ticker'].tolist()[:140]:  # Limit to first 50 tickers to avoid slowdown
-            try:
-                df = load_price_range(ticker, start_date, end_date)
-                if df.empty or len(df) < 14:
-                    continue
-                
-                # Sort ascending for proper calculations
-                df = df.sort_values('date', ascending=True).reset_index(drop=True)
-                
-                # Get latest bar - MUST BE LAST ROW
-                latest = df.iloc[-1]
-                latest_date = latest['date']
-                close = float(latest['close'])
-                
-                # Calculate indicators using TA-Lib if available
-                close_array = df['close'].values.astype(np.float64)
-                
-                if HAS_TALIB:
-                    try:
-                        ma20_arr = talib.SMA(close_array, timeperiod=20)
-                        ma50_arr = talib.SMA(close_array, timeperiod=50)
-                        ma200_arr = talib.SMA(close_array, timeperiod=200)
-                        rsi_arr = talib.RSI(close_array, timeperiod=14)
-                        macd_line, macd_signal, macd_hist = talib.MACD(close_array, fastperiod=12, slowperiod=26, signalperiod=9)
-                        
-                        debug_data.append({
-                            'Ticker': ticker,
-                            'Date': latest_date.strftime("%Y-%m-%d"),
-                            'Close': f"{close:.2f}",
-                            'MA20': f"{ma20_arr[-1]:.2f}" if not np.isnan(ma20_arr[-1]) else "N/A",
-                            'MA50': f"{ma50_arr[-1]:.2f}" if not np.isnan(ma50_arr[-1]) else "N/A",
-                            'MA200': f"{ma200_arr[-1]:.2f}" if not np.isnan(ma200_arr[-1]) else "N/A",
-                            'RSI': f"{rsi_arr[-1]:.2f}" if not np.isnan(rsi_arr[-1]) else "N/A",
-                            'MACD_Hist': f"{macd_hist[-1]:.6f}" if not np.isnan(macd_hist[-1]) else "N/A",
-                            'MACD_Stage': breadth_df[breadth_df['ticker'] == ticker]['macd_stage'].iloc[0],
-                            'Bars': len(df)
-                        })
-                    except Exception as e:
-                        st.caption(f"⚠️ {ticker}: TA-Lib error - {str(e)[:50]}")
-                else:
-                    # Manual calculation
-                    ma20_val = df['close'].rolling(20).mean().iloc[-1]
-                    ma50_val = df['close'].rolling(50).mean().iloc[-1]
-                    ma200_val = df['close'].rolling(200).mean().iloc[-1]
-                    
-                    delta = df['close'].diff()
-                    gain = delta.where(delta > 0, 0)
-                    loss = -delta.where(delta < 0, 0)
-                    avg_gain = gain.rolling(14).mean().iloc[-1]
-                    avg_loss = loss.rolling(14).mean().iloc[-1]
-                    rs = avg_gain / avg_loss if avg_loss > 0 else 0
-                    rsi_val = 100 - (100 / (1 + rs)) if rs > 0 else 0
-                    
-                    _, _, hist = macd_hist(df['close'].astype(float))
-                    macd_hist_val = hist.iloc[-1] if not pd.isna(hist.iloc[-1]) else np.nan
-                    
-                    debug_data.append({
-                        'Ticker': ticker,
-                        'Date': latest_date.strftime("%Y-%m-%d"),
-                        'Close': f"{close:.2f}",
-                        'MA20': f"{ma20_val:.2f}" if not pd.isna(ma20_val) else "N/A",
-                        'MA50': f"{ma50_val:.2f}" if not pd.isna(ma50_val) else "N/A",
-                        'MA200': f"{ma200_val:.2f}" if not pd.isna(ma200_val) else "N/A",
-                        'RSI': f"{rsi_val:.2f}" if not np.isnan(rsi_val) else "N/A",
-                        'MACD_Hist': f"{macd_hist_val:.6f}" if not pd.isna(macd_hist_val) else "N/A",
-                        'MACD_Stage': breadth_df[breadth_df['ticker'] == ticker]['macd_stage'].iloc[0],
-                        'Bars': len(df)
-                    })
-            except Exception as e:
-                st.caption(f"⚠️ {ticker}: Error - {str(e)[:50]}")
-    
-    if debug_data:
-        debug_df = pd.DataFrame(debug_data)
+        # Load data with warmup period
+        df = load_price_data_for_ticker(ticker, warmup_start, end_date)
         
-        st.caption(f"**Showing first {len(debug_data)} tickers** (limited to 50 for performance)")
-        st.caption(f"**Calculation method:** {'TA-Lib' if HAS_TALIB else 'Manual (Wilder\'s smoothing)'}")
+        if df.empty or 'close' not in df.columns:
+            return pd.DataFrame()
         
-        # Display table with scrolling
-        st.dataframe(
-            debug_df,
-            height=400,
-            width='stretch',
-            column_config={
-                'Ticker': st.column_config.TextColumn('Ticker', width='small'),
-                'Date': st.column_config.TextColumn('Date', width='medium'),
-                'Close': st.column_config.TextColumn('Close', width='small'),
-                'MA20': st.column_config.TextColumn('MA20', width='small'),
-                'MA50': st.column_config.TextColumn('MA50', width='small'),
-                'MA200': st.column_config.TextColumn('MA200', width='small'),
-                'RSI': st.column_config.TextColumn('RSI', width='small'),
-                'MACD_Hist': st.column_config.TextColumn('MACD Hist', width='medium'),
-                'MACD_Stage': st.column_config.TextColumn('Stage', width='medium'),
-                'Bars': st.column_config.NumberColumn('Bars', width='small')
-            }
-        )
+        # Calculate indicators on full dataset (including warmup)
+        df = calculate_all_indicators(df)
         
-        # Download debug table
-        st.download_button(
-            "📥 Download Debug Table",
-            debug_df.to_csv(index=False).encode('utf-8'),
-            f"breadth_debug_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
-            "text/csv"
-        )
+        # Calculate MACD stage for each row
+        if 'macd_hist' in df.columns:
+            stages = []
+            for i in range(len(df)):
+                hist_slice = df['macd_hist'].iloc[:i+1]
+                stage = detect_macd_stage(hist_slice, lookback=20)
+                stages.append(stage)
+            df['macd_stage'] = stages
         
-        # Show summary statistics
-        st.markdown("**Debug Summary:**")
-        col1, col2, col3, col4 = st.columns(4)
-        with col1:
-            avg_bars = debug_df['Bars'].astype(int).mean()
-            st.metric("Avg Bars/Ticker", f"{avg_bars:.0f}")
-        with col2:
-            rsi_valid = len([x for x in debug_df['RSI'] if x != 'N/A'])
-            st.metric("Tickers with RSI", f"{rsi_valid}/{len(debug_df)}")
-        with col3:
-            ma200_valid = len([x for x in debug_df['MA200'] if x != 'N/A'])
-            st.metric("Tickers with MA200", f"{ma200_valid}/{len(debug_df)}")
-        with col4:
-            macd_valid = len([x for x in debug_df['MACD_Hist'] if x != 'N/A'])
-            st.metric("Tickers with MACD", f"{macd_valid}/{len(debug_df)}")
-    else:
-        st.warning("No debug data available for selected tickers")
+        # Trim to original date range (remove warmup period)
+        df = df[df['date'] >= start_date].copy()
+        
+        return df
+    except Exception as e:
+        st.error(f"Error calculating indicators for {ticker}: {e}")
+        return pd.DataFrame()
 
-# --- Moving Average Breadth ---
-st.markdown("#### 📈 Moving Average Breadth")
-col1, col2, col3 = st.columns(3)
-
-ma20_above = breadth_df['above_ma20'].sum()
-ma20_pct = (ma20_above / len(breadth_df) * 100) if len(breadth_df) > 0 else 0
-
-ma50_above = breadth_df['above_ma50'].sum()
-ma50_pct = (ma50_above / len(breadth_df) * 100) if len(breadth_df) > 0 else 0
-
-ma200_above = breadth_df['above_ma200'].sum()
-ma200_pct = (ma200_above / len(breadth_df) * 100) if len(breadth_df) > 0 else 0
-
-with col1:
-    st.metric("Above MA20", f"{ma20_pct:.1f}%", f"{ma20_above}/{len(breadth_df)}")
-    with st.expander("📋 View MA20 Tickers"):
-        ma20_tickers = breadth_df[breadth_df['above_ma20']]['ticker'].tolist()
-        if ma20_tickers:
-            st.markdown(f"**Tickers above MA20 ({len(ma20_tickers)}):**")
-            tickers_text = ", ".join(sorted(ma20_tickers))
-            st.text_area("", value=tickers_text, height=100, disabled=True, key="ma20_tickers")
-        else:
-            st.info("No tickers above MA20")
-
-with col2:
-    st.metric("Above MA50", f"{ma50_pct:.1f}%", f"{ma50_above}/{len(breadth_df)}")
-    with st.expander("📋 View MA50 Tickers"):
-        ma50_tickers = breadth_df[breadth_df['above_ma50']]['ticker'].tolist()
-        if ma50_tickers:
-            st.markdown(f"**Tickers above MA50 ({len(ma50_tickers)}):**")
-            tickers_text = ", ".join(sorted(ma50_tickers))
-            st.text_area("", value=tickers_text, height=100, disabled=True, key="ma50_tickers")
-        else:
-            st.info("No tickers above MA50")
-
-with col3:
-    st.metric("Above MA200", f"{ma200_pct:.1f}%", f"{ma200_above}/{len(breadth_df)}")
-    with st.expander("📋 View MA200 Tickers"):
-        ma200_tickers = breadth_df[breadth_df['above_ma200']]['ticker'].tolist()
-        if ma200_tickers:
-            st.markdown(f"**Tickers above MA200 ({len(ma200_tickers)}):**")
-            tickers_text = ", ".join(sorted(ma200_tickers))
-            st.text_area("", value=tickers_text, height=100, disabled=True, key="ma200_tickers")
-        else:
-            st.info("No tickers above MA200")
-
-# MA Breadth chart
-ma_chart_data = pd.DataFrame({
-    'Category': ['MA20', 'MA50', 'MA200'],
-    'Percentage': [ma20_pct, ma50_pct, ma200_pct],
-    'Count': [ma20_above, ma50_above, ma200_above],
-    'Tickers': [
-        ", ".join(sorted(ma20_tickers)),
-        ", ".join(sorted(ma50_tickers)),
-        ", ".join(sorted(ma200_tickers))
-    ]
-})
-
-fig_ma = go.Figure()
-fig_ma.add_trace(go.Bar(
-    x=ma_chart_data['Category'],
-    y=ma_chart_data['Percentage'],
-    marker_color=['#66bb6a' if x >= 50 else '#ff5252' for x in ma_chart_data['Percentage']],
-    text=[f"{x:.1f}%" for x in ma_chart_data['Percentage']],
-    textposition='auto',
-    customdata=ma_chart_data[['Count', 'Tickers']],
-    hovertemplate='<b>%{x}</b><br>%{y:.1f}%<br>Count: %{customdata[0]}<br><br><b>Tickers:</b><br>%{customdata[1]}<extra></extra>'
-))
-fig_ma.update_layout(
-    title="% of Stocks Above Moving Averages",
-    yaxis_title="Percentage (%)",
-    height=400,
-    showlegend=False,
-    hovermode='x'
-)
-fig_ma.add_hline(y=50, line_dash="dash", line_color="gray", annotation_text="50%")
-st.plotly_chart(fig_ma, width='stretch')
-
-# --- RSI Breadth ---
-st.markdown("#### 🔄 RSI Breadth")
-
-rsi_df = breadth_df[breadth_df['rsi'].notna()].copy()
-rsi_above_50 = (rsi_df['rsi'] > 50).sum()
-rsi_below_50 = (rsi_df['rsi'] <= 50).sum()
-rsi_oversold = (rsi_df['rsi'] < 30).sum()
-rsi_overbought = (rsi_df['rsi'] > 70).sum()
-
-total_rsi = len(rsi_df)
-
-col1, col2, col3, col4 = st.columns(4)
-with col1:
-    st.metric("RSI > 50", f"{(rsi_above_50/total_rsi*100):.1f}%", f"{rsi_above_50}/{total_rsi}")
-    with st.expander("📋 View RSI > 50"):
-        rsi_above_50_tickers = rsi_df[rsi_df['rsi'] > 50]['ticker'].tolist()
-        if rsi_above_50_tickers:
-            st.markdown(f"**Tickers with RSI > 50 ({len(rsi_above_50_tickers)}):**")
-            tickers_text = ", ".join(sorted(rsi_above_50_tickers))
-            st.text_area("", value=tickers_text, height=100, disabled=True, key="rsi_above_50_tickers")
-        else:
-            st.info("No tickers with RSI > 50")
-
-with col2:
-    st.metric("RSI ≤ 50", f"{(rsi_below_50/total_rsi*100):.1f}%", f"{rsi_below_50}/{total_rsi}")
-    with st.expander("📋 View RSI ≤ 50"):
-        rsi_below_50_tickers = rsi_df[rsi_df['rsi'] <= 50]['ticker'].tolist()
-        if rsi_below_50_tickers:
-            st.markdown(f"**Tickers with RSI ≤ 50 ({len(rsi_below_50_tickers)}):**")
-            tickers_text = ", ".join(sorted(rsi_below_50_tickers))
-            st.text_area("", value=tickers_text, height=100, disabled=True, key="rsi_below_50_tickers")
-        else:
-            st.info("No tickers with RSI ≤ 50")
-
-with col3:
-    st.metric("Oversold (<30)", f"{(rsi_oversold/total_rsi*100):.1f}%", f"{rsi_oversold}/{total_rsi}")
-    with st.expander("📋 View Oversold"):
-        rsi_oversold_tickers = rsi_df[rsi_df['rsi'] < 30]['ticker'].tolist()
-        if rsi_oversold_tickers:
-            st.markdown(f"**Oversold Tickers ({len(rsi_oversold_tickers)}):**")
-            tickers_text = ", ".join(sorted(rsi_oversold_tickers))
-            st.text_area("", value=tickers_text, height=100, disabled=True, key="rsi_oversold_tickers")
-        else:
-            st.info("No oversold tickers")
-
-with col4:
-    st.metric("Overbought (>70)", f"{(rsi_overbought/total_rsi*100):.1f}%", f"{rsi_overbought}/{total_rsi}")
-    with st.expander("📋 View Overbought"):
-        rsi_overbought_tickers = rsi_df[rsi_df['rsi'] > 70]['ticker'].tolist()
-        if rsi_overbought_tickers:
-            st.markdown(f"**Overbought Tickers ({len(rsi_overbought_tickers)}):**")
-            tickers_text = ", ".join(sorted(rsi_overbought_tickers))
-            st.text_area("", value=tickers_text, height=100, disabled=True, key="rsi_overbought_tickers")
-        else:
-            st.info("No overbought tickers")
-
-# RSI distribution histogram with custom hover
-fig_rsi = go.Figure()
-fig_rsi.add_trace(go.Histogram(
-    x=rsi_df['rsi'],
-    nbinsx=20,
-    marker_color='#1f77b4',
-    hovertemplate='<b>RSI Range:</b> %{x}<br><b>Count:</b> %{y}<extra></extra>'
-))
-fig_rsi.add_vline(x=30, line_dash="dash", line_color="green", annotation_text="Oversold (30)")
-fig_rsi.add_vline(x=50, line_dash="dash", line_color="gray", annotation_text="Neutral (50)")
-fig_rsi.add_vline(x=70, line_dash="dash", line_color="red", annotation_text="Overbought (70)")
-fig_rsi.update_layout(
-    title="RSI Distribution Across All Stocks",
-    xaxis_title="RSI Value",
-    yaxis_title="Number of Stocks",
-    height=400,
-    hovermode='x'
-)
-st.plotly_chart(fig_rsi, width='stretch')
-
-# --- MACD Stage Breadth ---
-st.markdown("#### 📊 MACD Histogram Stage Distribution")
-
-stage_counts = breadth_df['macd_stage'].value_counts()
-stage_order = [
-    "1. Troughing",
-    "2. Confirmed Trough",
-    "3. Rising above Zero",
-    "4. Peaking",
-    "5. Confirmed Peak",
-    "6. Falling below Zero"
-]
-
-# Prepare data for all stages (including zero counts)
-stage_data = []
-for stage in stage_order:
-    count = stage_counts.get(stage, 0)
-    pct = (count / len(breadth_df) * 100) if len(breadth_df) > 0 else 0
-    stage_tickers = breadth_df[breadth_df['macd_stage'] == stage]['ticker'].tolist()
-    stage_data.append({
-        'stage': stage,
-        'count': count,
-        'percentage': pct,
-        'tickers': ", ".join(sorted(stage_tickers))
-    })
-
-stage_summary_df = pd.DataFrame(stage_data)
-
-# Display metrics with expandable ticker lists
-cols = st.columns(6)
-for idx, row in stage_summary_df.iterrows():
-    with cols[idx]:
-        stage_name = row['stage'].split('. ')[1]
-        st.metric(stage_name, f"{row['percentage']:.1f}%", f"{row['count']}/{len(breadth_df)}")
-        with st.expander("📋 View"):
-            if row['tickers']:
-                st.markdown(f"**{row['stage']} ({row['count']}):**")
-                st.text_area("", value=row['tickers'], height=80, disabled=True, key=f"macd_tickers_{idx}")
-            else:
-                st.info("No tickers in this stage")
-
-# MACD stage chart with custom hover text
-stage_colors = {
-    "1. Troughing": "#c8e6c9",
-    "2. Confirmed Trough": "#39ff14",
-    "3. Rising above Zero": "#2e7d32",
-    "4. Peaking": "#ffccbc",
-    "5. Confirmed Peak": "#ff5252",
-    "6. Falling below Zero": "#c62828"
-}
-
-fig_macd = go.Figure()
-fig_macd.add_trace(go.Bar(
-    x=stage_summary_df['stage'],
-    y=stage_summary_df['percentage'],
-    marker_color=[stage_colors.get(s, '#1f77b4') for s in stage_summary_df['stage']],
-    text=[f"{p:.1f}%" for p in stage_summary_df['percentage']],
-    textposition='auto',
-    customdata=stage_summary_df[['count', 'tickers']],
-    hovertemplate='<b>%{x}</b><br>%{y:.1f}%<br>Count: %{customdata[0]}<br><br><b>Tickers:</b><br>%{customdata[1]}<extra></extra>'
-))
-fig_macd.update_layout(
-    title="% of Stocks in Each MACD Stage",
-    xaxis_title="MACD Stage",
-    yaxis_title="Percentage (%)",
-    height=400,
-    showlegend=False,
-    hovermode='x'
-)
-st.plotly_chart(fig_macd, width='stretch')
-
-# --- Market Sentiment Summary ---
-st.markdown("#### 💡 Market Sentiment Summary")
-
-bullish_signals = 0
-bearish_signals = 0
-
-# MA breadth signals
-if ma20_pct > 60:
-    bullish_signals += 1
-elif ma20_pct < 40:
-    bearish_signals += 1
-
-if ma50_pct > 60:
-    bullish_signals += 1
-elif ma50_pct < 40:
-    bearish_signals += 1
-
-# RSI signals
-if rsi_oversold > rsi_overbought:
-    bullish_signals += 1
-elif rsi_overbought > rsi_oversold:
-    bearish_signals += 1
-
-# MACD signals
-bullish_macd = stage_counts.get("2. Confirmed Trough", 0) + stage_counts.get("1. Troughing", 0)
-bearish_macd = stage_counts.get("5. Confirmed Peak", 0) + stage_counts.get("4. Peaking", 0)
-
-if bullish_macd > bearish_macd:
-    bullish_signals += 1
-elif bearish_macd > bullish_macd:
-    bearish_signals += 1
-
-col1, col2, col3 = st.columns(3)
-with col1:
-    st.metric("Bullish Signals", bullish_signals, help="Number of bullish market breadth indicators")
-with col2:
-    st.metric("Bearish Signals", bearish_signals, help="Number of bearish market breadth indicators")
-with col3:
-    if bullish_signals > bearish_signals:
-        sentiment = "🟢 Bullish"
-        delta = f"+{bullish_signals - bearish_signals}"
-    elif bearish_signals > bullish_signals:
-        sentiment = "🔴 Bearish"
-        delta = f"-{bearish_signals - bullish_signals}"
-    else:
-        sentiment = "⚪ Neutral"
-        delta = "0"
-    st.metric("Overall Sentiment", sentiment, delta)
-
-# --- Download Data ---
-st.markdown("---")
-st.markdown("### 📥 Download Data")
-
-# Prepare summary CSV
-summary_data = {
-    'Metric': [
-        'Above MA20 (%)', 'Above MA50 (%)', 'Above MA200 (%)',
-        'RSI > 50 (%)', 'RSI <= 50 (%)', 'RSI Oversold (%)', 'RSI Overbought (%)'
-    ],
-    'Value': [
-        f"{ma20_pct:.1f}",
-        f"{ma50_pct:.1f}",
-        f"{ma200_pct:.1f}",
-        f"{(rsi_above_50/total_rsi*100):.1f}",
-        f"{(rsi_below_50/total_rsi*100):.1f}",
-        f"{(rsi_oversold/total_rsi*100):.1f}",
-        f"{(rsi_overbought/total_rsi*100):.1f}"
-    ],
-    'Count': [
-        f"{ma20_above}/{len(breadth_df)}",
-        f"{ma50_above}/{len(breadth_df)}",
-        f"{ma200_above}/{len(breadth_df)}",
-        f"{rsi_above_50}/{total_rsi}",
-        f"{rsi_below_50}/{total_rsi}",
-        f"{rsi_oversold}/{total_rsi}",
-        f"{rsi_overbought}/{total_rsi}"
-    ]
-}
-
-for _, row in stage_summary_df.iterrows():
-    summary_data['Metric'].append(f"MACD: {row['stage']}")
-    summary_data['Value'].append(f"{row['percentage']:.1f}")
-    summary_data['Count'].append(f"{row['count']}/{len(breadth_df)}")
-
-summary_df = pd.DataFrame(summary_data)
-
-col1, col2 = st.columns(2)
-with col1:
-    st.download_button(
-        "Download Summary CSV",
-        summary_df.to_csv(index=False).encode('utf-8'),
-        f"market_breadth_{datetime.now().strftime('%Y%m%d')}.csv",
-        "text/csv"
-    )
-
-with col2:
-    st.download_button(
-        "Download Detailed Data CSV",
-        breadth_df.to_csv(index=False).encode('utf-8'),
-        f"market_breadth_detailed_{datetime.now().strftime('%Y%m%d')}.csv",
-        "text/csv"
-    )
-
-# Database functions for historical breadth data
-def create_breadth_history_table(db_path=DB_PATH):
-    """Create table/collection for storing historical market breadth data."""
-    if HAS_DB_ADAPTER:
-        # MongoDB/db_adapter handles schema implicitly
-        return True
-    else:
-        # SQLite fallback
-        conn = sqlite3.connect(db_path)
-        cur = conn.cursor()
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS market_breadth_history (
-                date TEXT PRIMARY KEY,
-                ma20_above INTEGER,
-                ma20_pct REAL,
-                ma50_above INTEGER,
-                ma50_pct REAL,
-                ma200_above INTEGER,
-                ma200_pct REAL,
-                rsi_above_50 INTEGER,
-                rsi_below_50 INTEGER,
-                rsi_oversold INTEGER,
-                rsi_overbought INTEGER,
-                macd_troughing INTEGER,
-                macd_confirmed_trough INTEGER,
-                macd_rising INTEGER,
-                macd_peaking INTEGER,
-                macd_confirmed_peak INTEGER,
-                macd_falling INTEGER,
-                total_tickers INTEGER,
-                calculated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
-        conn.commit()
-        conn.close()
-        return True
-
-def save_breadth_snapshot(date_str, breadth_data, db_path=DB_PATH):
-    """Save a daily breadth snapshot to database (MongoDB or SQLite)."""
-    if HAS_DB_ADAPTER and db is not None:
-        try:
-            # Try to use db_adapter's method if it exists
-            if hasattr(db, 'save_breadth_snapshot') and callable(getattr(db, 'save_breadth_snapshot')):
-                doc = {
-                    'date': date_str,
-                    'ma20_above': int(breadth_data['ma20_above']),
-                    'ma20_pct': float(breadth_data['ma20_pct']),
-                    'ma50_above': int(breadth_data['ma50_above']),
-                    'ma50_pct': float(breadth_data['ma50_pct']),
-                    'ma200_above': int(breadth_data['ma200_above']),
-                    'ma200_pct': float(breadth_data['ma200_pct']),
-                    'rsi_above_50': int(breadth_data['rsi_above_50']),
-                    'rsi_below_50': int(breadth_data['rsi_below_50']),
-                    'rsi_oversold': int(breadth_data['rsi_oversold']),
-                    'rsi_overbought': int(breadth_data['rsi_overbought']),
-                    'macd_troughing': int(breadth_data['macd_troughing']),
-                    'macd_confirmed_trough': int(breadth_data['macd_confirmed_trough']),
-                    'macd_rising': int(breadth_data['macd_rising']),
-                    'macd_peaking': int(breadth_data['macd_peaking']),
-                    'macd_confirmed_peak': int(breadth_data['macd_confirmed_peak']),
-                    'macd_falling': int(breadth_data['macd_falling']),
-                    'total_tickers': int(breadth_data['total_tickers'])
-                }
-                return db.save_breadth_snapshot(date_str, doc)
-        except (AttributeError, Exception):
-            # Fall through to SQLite if db_adapter method doesn't exist
-            pass
-    
-    # SQLite fallback
-    conn = sqlite3.connect(db_path)
-    cur = conn.cursor()
-    
-    cur.execute("""
-        INSERT OR REPLACE INTO market_breadth_history 
-        (date, ma20_above, ma20_pct, ma50_above, ma50_pct, ma200_above, ma200_pct,
-         rsi_above_50, rsi_below_50, rsi_oversold, rsi_overbought,
-         macd_troughing, macd_confirmed_trough, macd_rising, macd_peaking, 
-         macd_confirmed_peak, macd_falling, total_tickers)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    """, (
-        date_str,
-        breadth_data['ma20_above'], breadth_data['ma20_pct'],
-        breadth_data['ma50_above'], breadth_data['ma50_pct'],
-        breadth_data['ma200_above'], breadth_data['ma200_pct'],
-        breadth_data['rsi_above_50'], breadth_data['rsi_below_50'],
-        breadth_data['rsi_oversold'], breadth_data['rsi_overbought'],
-        breadth_data['macd_troughing'], breadth_data['macd_confirmed_trough'],
-        breadth_data['macd_rising'], breadth_data['macd_peaking'],
-        breadth_data['macd_confirmed_peak'], breadth_data['macd_falling'],
-        breadth_data['total_tickers']
-    ))
-    
-    conn.commit()
-    conn.close()
-    return True
-
-def load_breadth_history(days=548, db_path=DB_PATH):
-    """Load historical breadth data from database (MongoDB or SQLite)."""
-    if HAS_DB_ADAPTER and db is not None:
-        try:
-            # Try to use db_adapter's method if it exists
-            if hasattr(db, 'load_breadth_history') and callable(getattr(db, 'load_breadth_history')):
-                end_date = datetime.now()
-                start_date = end_date - timedelta(days=days)
-                
-                df = db.load_breadth_history(start_date.strftime("%Y-%m-%d"), end_date.strftime("%Y-%m-%d"))
-                
-                if not df.empty:
-                    df['date'] = pd.to_datetime(df['date'])
-                    
-                    # Ensure numeric types
-                    numeric_cols = [
-                        'ma20_above', 'ma20_pct', 'ma50_above', 'ma50_pct', 
-                        'ma200_above', 'ma200_pct', 'rsi_above_50', 'rsi_below_50',
-                        'rsi_oversold', 'rsi_overbought', 'macd_troughing',
-                        'macd_confirmed_trough', 'macd_rising', 'macd_peaking',
-                        'macd_confirmed_peak', 'macd_falling', 'total_tickers'
-                    ]
-                    
-                    for col in numeric_cols:
-                        if col in df.columns:
-                            if col.endswith('_pct'):
-                                df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0.0).astype(float)
-                            else:
-                                df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0).astype(int)
-                    
-                    # Sort by date ASCENDING (earliest first) for consistent time series
-                    df = df.sort_values('date', ascending=True).reset_index(drop=True)
-                    return df
-        except (AttributeError, Exception):
-            # Fall through to SQLite if db_adapter method doesn't exist
-            pass
-    
-    # SQLite fallback
-    conn = sqlite3.connect(db_path)
-    end_date = datetime.now()
-    start_date = end_date - timedelta(days=days)
-    
-    query = """
-        SELECT * FROM market_breadth_history 
-        WHERE date >= ? 
-        ORDER BY date ASC
+async def calculate_indicators_for_ticker_async(
+    db: AsyncDatabaseAdapter,
+    ticker: str,
+    start_date: datetime,
+    end_date: datetime
+) -> Tuple[str, pd.DataFrame]:
     """
-    
-    df = pd.read_sql_query(query, conn, params=(start_date.strftime("%Y-%m-%d"),))
-    conn.close()
-    
-    if not df.empty:
-        df['date'] = pd.to_datetime(df['date'])
+    Async version: Calculate all indicators for a ticker.
+    Returns tuple of (ticker, dataframe) for batch processing.
+    """
+    try:
+        # Add warmup period for indicators (200 days = ~290 calendar days)
+        warmup_days = 365  # Use 1 year warmup to ensure all indicators have enough data
+        warmup_start = start_date - timedelta(days=warmup_days)
         
-        numeric_cols = [
-            'ma20_above', 'ma20_pct', 'ma50_above', 'ma50_pct', 
-            'ma200_above', 'ma200_pct', 'rsi_above_50', 'rsi_below_50',
-            'rsi_oversold', 'rsi_overbought', 'macd_troughing',
-            'macd_confirmed_trough', 'macd_rising', 'macd_peaking',
-            'macd_confirmed_peak', 'macd_falling', 'total_tickers'
-        ]
+        # Load price data with warmup period
+        df = await db.get_price_data(ticker, warmup_start, end_date)
         
-        for col in numeric_cols:
-            if col in df.columns:
-                if col.endswith('_pct'):
-                    df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0.0).astype(float)
-                else:
-                    df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0).astype(int)
-    
-    return df
+        if df.empty or 'close' not in df.columns:
+            return (ticker, pd.DataFrame())
+        
+        # Calculate indicators on full dataset (including warmup)
+        df = calculate_all_indicators(df)
+        
+        # Calculate MACD stage for each row
+        if 'macd_hist' in df.columns:
+            stages = []
+            for i in range(len(df)):
+                hist_slice = df['macd_hist'].iloc[:i+1]
+                stage = detect_macd_stage(hist_slice, lookback=20)
+                stages.append(stage)
+            df['macd_stage'] = stages
+        
+        # Trim to original date range (remove warmup period)
+        df = df[df['date'] >= start_date].copy()
+        
+        return (ticker, df)
+    except Exception as e:
+        print(f"Error calculating indicators for {ticker}: {e}")
+        return (ticker, pd.DataFrame())
 
-async def calculate_daily_breadth_async(date_str, all_tickers, lookback=20):
-    """Calculate breadth metrics for a specific date asynchronously."""
-    import asyncio
-    
-    # Set date range: need 250+ days before target date for MA200 calculation
-    target_date = datetime.strptime(date_str, "%Y-%m-%d")
-    calc_start = target_date - timedelta(days=300)  # Extra buffer for MA200
-    calc_end = target_date
-    
-    # Run synchronous calculation in thread pool
-    loop = asyncio.get_event_loop()
-    breadth_df, _, _ = await loop.run_in_executor(
-        None,
-        calculate_breadth_metrics,
-        all_tickers,
-        calc_start.strftime("%Y-%m-%d"),
-        calc_end.strftime("%Y-%m-%d"),
-        lookback,
-        False
-    )
-    
-    if breadth_df.empty:
-        return None
-    
-    # Calculate all metrics
-    total = len(breadth_df)
-    
-    ma20_above = int(breadth_df['above_ma20'].sum())
-    ma50_above = int(breadth_df['above_ma50'].sum())
-    ma200_above = int(breadth_df['above_ma200'].sum())
-    
-    rsi_df = breadth_df[breadth_df['rsi'].notna()]
-    total_rsi = len(rsi_df) if len(rsi_df) > 0 else 1
-    rsi_above_50 = int((rsi_df['rsi'] > 50).sum())
-    rsi_below_50 = int((rsi_df['rsi'] <= 50).sum())
-    rsi_oversold = int((rsi_df['rsi'] < 30).sum())
-    rsi_overbought = int((rsi_df['rsi'] > 70).sum())
-    
-    stage_counts = breadth_df['macd_stage'].value_counts()
-    
-    return {
-        'ma20_above': ma20_above,
-        'ma20_pct': (ma20_above / total * 100) if total > 0 else 0,
-        'ma50_above': ma50_above,
-        'ma50_pct': (ma50_above / total * 100) if total > 0 else 0,
-        'ma200_above': ma200_above,
-        'ma200_pct': (ma200_above / total * 100) if total > 0 else 0,
-        'rsi_above_50': rsi_above_50,
-        'rsi_below_50': rsi_below_50,
-        'rsi_oversold': rsi_oversold,
-        'rsi_overbought': rsi_overbought,
-        'macd_troughing': int(stage_counts.get("1. Troughing", 0)),
-        'macd_confirmed_trough': int(stage_counts.get("2. Confirmed Trough", 0)),
-        'macd_rising': int(stage_counts.get("3. Rising above Zero", 0)),
-        'macd_peaking': int(stage_counts.get("4. Peaking", 0)),
-        'macd_confirmed_peak': int(stage_counts.get("5. Confirmed Peak", 0)),
-        'macd_falling': int(stage_counts.get("6. Falling below Zero", 0)),
-        'total_tickers': total
-    }
+async def save_ticker_indicators_async(
+    db: AsyncDatabaseAdapter,
+    ticker: str,
+    df: pd.DataFrame
+) -> Tuple[str, bool]:
+    """
+    Async version: Save calculated indicators to database.
+    Returns tuple of (ticker, success) for tracking.
+    """
+    try:
+        if df.empty:
+            return (ticker, False)
+        
+        # Save each date's indicators
+        tasks = []
+        for _, row in df.iterrows():
+            if pd.notna(row.get('date')):
+                indicators = {
+                    'close': float(row.get('close', np.nan)),
+                    'ema10': float(row.get('ema10', np.nan)),
+                    'ema20': float(row.get('ema20', np.nan)),
+                    'ema50': float(row.get('ema50', np.nan)),
+                    'ema100': float(row.get('ema100', np.nan)),
+                    'ema200': float(row.get('ema200', np.nan)),
+                    'rsi': float(row.get('rsi', np.nan)),
+                    'macd': float(row.get('macd', np.nan)),
+                    'macd_signal': float(row.get('macd_signal', np.nan)),
+                    'macd_hist': float(row.get('macd_hist', np.nan)),
+                    'macd_stage': str(row.get('macd_stage', 'N/A')),
+                    'bb_upper': float(row.get('bb_upper', np.nan)),
+                    'bb_middle': float(row.get('bb_middle', np.nan)),
+                    'bb_lower': float(row.get('bb_lower', np.nan)),
+                }
+                task = db.save_indicators(ticker, row['date'], indicators)
+                tasks.append(task)
+        
+        # Save all dates for this ticker in parallel
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        
+        # Check if all succeeded
+        success = all(r is True for r in results if not isinstance(r, Exception))
+        return (ticker, success)
+        
+    except Exception as e:
+        print(f"Error saving indicators for {ticker}: {e}")
+        return (ticker, False)
 
-def calculate_daily_breadth(date_str, all_tickers, lookback=20, db_path=DB_PATH):
-    """Calculate breadth metrics for a specific date (synchronous version)."""
-    # Set date range: need 250+ days before target date for MA200 calculation
-    target_date = datetime.strptime(date_str, "%Y-%m-%d")
-    calc_start = target_date - timedelta(days=300)
-    calc_end = target_date
+async def process_ticker_batch_async(
+    db: AsyncDatabaseAdapter,
+    tickers: List[str],
+    start_date: datetime,
+    end_date: datetime
+) -> Tuple[int, int]:
+    """
+    Process a batch of tickers in parallel.
+    Returns tuple of (success_count, failed_count).
+    """
+    # Step 1: Calculate indicators for all tickers in batch (parallel)
+    calc_tasks = [
+        calculate_indicators_for_ticker_async(db, ticker, start_date, end_date)
+        for ticker in tickers
+    ]
+    calc_results = await asyncio.gather(*calc_tasks, return_exceptions=True)
     
-    breadth_df, _, _ = calculate_breadth_metrics(
-        all_tickers, 
-        calc_start.strftime("%Y-%m-%d"), 
-        calc_end.strftime("%Y-%m-%d"), 
-        lookback, 
-        debug=False
-    )
+    # Step 2: Save indicators for all tickers in batch (parallel)
+    save_tasks = []
+    for result in calc_results:
+        if isinstance(result, Exception):
+            continue
+        ticker, df = result
+        if not df.empty:
+            save_tasks.append(save_ticker_indicators_async(db, ticker, df))
     
-    if breadth_df.empty:
-        return None
+    save_results = await asyncio.gather(*save_tasks, return_exceptions=True)
     
-    # Calculate all metrics
-    total = len(breadth_df)
+    # Count successes and failures
+    success_count = sum(1 for r in save_results if not isinstance(r, Exception) and r[1] is True)
+    failed_count = len(tickers) - success_count
     
-    ma20_above = int(breadth_df['above_ma20'].sum())
-    ma50_above = int(breadth_df['above_ma50'].sum())
-    ma200_above = int(breadth_df['above_ma200'].sum())
-    
-    rsi_df = breadth_df[breadth_df['rsi'].notna()]
-    total_rsi = len(rsi_df) if len(rsi_df) > 0 else 1
-    rsi_above_50 = int((rsi_df['rsi'] > 50).sum())
-    rsi_below_50 = int((rsi_df['rsi'] <= 50).sum())
-    rsi_oversold = int((rsi_df['rsi'] < 30).sum())
-    rsi_overbought = int((rsi_df['rsi'] > 70).sum())
-    
-    stage_counts = breadth_df['macd_stage'].value_counts()
-    
-    return {
-        'ma20_above': ma20_above,
-        'ma20_pct': (ma20_above / total * 100) if total > 0 else 0,
-        'ma50_above': ma50_above,
-        'ma50_pct': (ma50_above / total * 100) if total > 0 else 0,
-        'ma200_above': ma200_above,
-        'ma200_pct': (ma200_above / total * 100) if total > 0 else 0,
-        'rsi_above_50': rsi_above_50,
-        'rsi_below_50': rsi_below_50,
-        'rsi_oversold': rsi_oversold,
-        'rsi_overbought': rsi_overbought,
-        'macd_troughing': int(stage_counts.get("1. Troughing", 0)),
-        'macd_confirmed_trough': int(stage_counts.get("2. Confirmed Trough", 0)),
-        'macd_rising': int(stage_counts.get("3. Rising above Zero", 0)),
-        'macd_peaking': int(stage_counts.get("4. Peaking", 0)),
-        'macd_confirmed_peak': int(stage_counts.get("5. Confirmed Peak", 0)),
-        'macd_falling': int(stage_counts.get("6. Falling below Zero", 0)),
-        'total_tickers': total
-    }
+    return (success_count, failed_count)
 
-# Initialize database table
-create_breadth_history_table()
+async def calculate_and_save_breadth_for_date_async(
+    db: AsyncDatabaseAdapter,
+    date: datetime
+) -> Tuple[datetime, bool]:
+    """
+    Calculate and save market breadth for a specific date.
+    Returns tuple of (date, success).
+    """
+    try:
+        # Get indicators for this date
+        df_indicators = await db.get_indicators_for_date(date)
+        
+        if df_indicators.empty:
+            return (date, False)
+        
+        # Calculate breadth (synchronous but fast)
+        breadth = calculate_market_breadth(df_indicators)
+        
+        # Convert numpy types to Python native types
+        clean_breadth = convert_numpy_types(breadth)
+        
+        # Save to database
+        success = await db.save_market_breadth(date, clean_breadth)
+        
+        return (date, success)
+    except Exception as e:
+        print(f"Error calculating breadth for {date}: {e}")
+        return (date, False)
 
-# Save today's snapshot
-if not breadth_df.empty:
-    today_data = {
-        'ma20_above': ma20_above,
-        'ma20_pct': ma20_pct,
-        'ma50_above': ma50_above,
-        'ma50_pct': ma50_pct,
-        'ma200_above': ma200_above,
-        'ma200_pct': ma200_pct,
-        'rsi_above_50': rsi_above_50,
-        'rsi_below_50': rsi_below_50,
-        'rsi_oversold': rsi_oversold,
-        'rsi_overbought': rsi_overbought,
-        'macd_troughing': int(stage_counts.get("1. Troughing", 0)),
-        'macd_confirmed_trough': int(stage_counts.get("2. Confirmed Trough", 0)),
-        'macd_rising': int(stage_counts.get("3. Rising above Zero", 0)),
-        'macd_peaking': int(stage_counts.get("4. Peaking", 0)),
-        'macd_confirmed_peak': int(stage_counts.get("5. Confirmed Peak", 0)),
-        'macd_falling': int(stage_counts.get("6. Falling below Zero", 0)),
-        'total_tickers': len(breadth_df)
-    }
-    save_breadth_snapshot(current_date_str, today_data)
+async def process_date_batch_async(
+    db: AsyncDatabaseAdapter,
+    dates: List[datetime]
+) -> Tuple[int, int]:
+    """
+    Process a batch of dates in parallel for breadth calculation.
+    Returns tuple of (success_count, failed_count).
+    """
+    tasks = [
+        calculate_and_save_breadth_for_date_async(db, date)
+        for date in dates
+    ]
+    
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+    
+    success_count = sum(1 for r in results if not isinstance(r, Exception) and r[1] is True)
+    failed_count = len(dates) - success_count
+    
+    return (success_count, failed_count)
 
-# --- Historical Breadth Charts -----------------------------------------------
-if show_historical:
-    st.markdown("---")
-    st.markdown("### 📈 Historical Market Breadth")
+def run_async_batch_calculation(
+    tickers: List[str],
+    start_date: datetime,
+    end_date: datetime,
+    ticker_batch_size: int = 10,
+    progress_callback=None
+) -> Tuple[int, int]:
+    """
+    Run async batch calculation with proper event loop handling.
     
-    # Check if recalculation requested
-    if st.session_state.get('recalculate_breadth', False):
-        with st.spinner(f"Recalculating {historical_days} days of historical breadth data..."):
-            progress_bar = st.progress(0)
-            status_text = st.empty()
-            
-            # Calculate for each trading day going backwards from today
-            end_date_calc = datetime.now().date()
-            successful = 0
-            failed = 0
-            
-            # Use async batch processing for speed
-            import asyncio
-            
-            async def calculate_all_dates():
-                tasks = []
-                dates_to_calc = []
-                
-                for days_ago in range(historical_days):
-                    target_date = end_date_calc - timedelta(days=days_ago)
-                    
-                    # Skip weekends (rough check)
-                    if target_date.weekday() >= 5:
-                        continue
-                    
-                    date_str = target_date.strftime("%Y-%m-%d")
-                    dates_to_calc.append(date_str)
-                    tasks.append(calculate_daily_breadth_async(date_str, all_tickers, lookback))
-                
-                # Run all calculations concurrently with progress tracking
-                results = []
-                for i, task in enumerate(asyncio.as_completed(tasks)):
-                    result = await task
-                    results.append(result)
-                    progress_bar.progress((i + 1) / len(tasks))
-                    status_text.text(f"Calculating breadth... ({i + 1}/{len(tasks)} completed)")
-                
-                return list(zip(dates_to_calc, results))
-            
-            # Run async calculations
-            try:
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
-                date_results = loop.run_until_complete(calculate_all_dates())
-                loop.close()
-                
-                # Save results
-                for idx, (date_str, breadth_data) in enumerate(date_results):
-                    status_text.text(f"Saving {date_str} ({idx + 1}/{len(date_results)})...")
-                    
-                    if isinstance(breadth_data, Exception):
-                        failed += 1
-                        if debug:
-                            st.error(f"Error calculating {date_str}: {breadth_data}")
-                    elif breadth_data:
-                        save_breadth_snapshot(date_str, breadth_data, DB_PATH)
-                        successful += 1
-                    else:
-                        failed += 1
-                    
-                    progress_bar.progress((idx + 1) / len(date_results))
-                
-                status_text.empty()
-                progress_bar.empty()
-                st.success(f"✓ Async calculation completed: {successful} successful, {failed} failed")
-                
-                if failed > 0:
-                    st.warning(f"⚠️ {failed} days could not be calculated (likely weekends or insufficient data)")
-            
-            except Exception as e:
-                st.error(f"❌ Async calculation error: {e}")
-                # Fallback to synchronous if async fails
-                st.info("Falling back to synchronous calculation...")
-                
-                for days_ago in range(historical_days):
-                    target_date = end_date_calc - timedelta(days=days_ago)
-                    date_str = target_date.strftime("%Y-%m-%d")
-                    
-                    if target_date.weekday() >= 5:
-                        continue
-                    
-                    status_text.text(f"Processing {date_str} ({days_ago + 1}/{historical_days})...")
-                    
-                    try:
-                        breadth_data = calculate_daily_breadth(date_str, all_tickers, lookback, DB_PATH)
-                        if breadth_data:
-                            save_breadth_snapshot(date_str, breadth_data, DB_PATH)
-                            successful += 1
-                        else:
-                            failed += 1
-                    except Exception as e:
-                        failed += 1
-                        if debug:
-                            st.error(f"Error calculating {date_str}: {e}")
-                    
-                    progress_bar.progress((days_ago + 1) / historical_days)
-                
-                status_text.empty()
-                progress_bar.empty()
-                st.success(f"✓ Sync calculation completed: {successful} successful, {failed} failed")
-        
-        st.session_state['recalculate_breadth'] = False
-        st.rerun()
+    Args:
+        tickers: List of ticker symbols
+        start_date: Start date for calculation
+        end_date: End date for calculation
+        ticker_batch_size: Number of tickers to process in parallel
+        progress_callback: Optional callback for progress updates
     
-    # Load historical data
-    hist_df = load_breadth_history(days=historical_days, db_path=DB_PATH)
+    Returns:
+        Tuple of (total_success, total_failed)
+    """
+    if not HAS_MOTOR:
+        return (0, 0)  # Fall back to sync processing
     
-    if hist_df.empty:
-        st.warning("📭 No historical data available. Click '🔄 Recalculate Historical Data' button in the sidebar to generate it.")
-        st.info(f"""
-        **Note:** This will calculate breadth metrics for the past {historical_days} days using async processing.
-        - Each day requires data from 300 days prior for MA200 calculation
-        - Async batch processing significantly reduces calculation time
-        - Weekend days will be skipped automatically
-        - Estimated time: ~{historical_days * 0.1:.0f} seconds ({historical_days * 0.1 / 60:.1f} minutes) with async
-        """)
-    else:
-        st.success(f"✅ Loaded {len(hist_df)} days of historical data (from {hist_df['date'].min().date()} to {hist_df['date'].max().date()})")
+    async def run():
+        db = AsyncDatabaseAdapter()
         
-        # Calculate bullish/bearish percentages FIRST (before merging)
-        hist_df['macd_bullish_pct'] = ((hist_df['macd_troughing'].astype(int) + hist_df['macd_confirmed_trough'].astype(int) + hist_df['macd_rising'].astype(int)) / hist_df['total_tickers'].astype(int) * 100).fillna(0)
-        hist_df['macd_bearish_pct'] = ((hist_df['macd_peaking'].astype(int) + hist_df['macd_confirmed_peak'].astype(int) + hist_df['macd_falling'].astype(int)) / hist_df['total_tickers'].astype(int) * 100).fillna(0)
+        total_success = 0
+        total_failed = 0
         
-        # --- VNINDEX Technical Analysis with Market Breadth Context ---
-        st.markdown("---")
-        st.markdown("### 📊 VNINDEX Technical Analysis with Market Breadth Context")
+        # Process tickers in batches
+        for i in range(0, len(tickers), ticker_batch_size):
+            batch = tickers[i:i + ticker_batch_size]
+            
+            if progress_callback:
+                progress_callback(i, len(tickers), f"Processing batch {i//ticker_batch_size + 1}")
+            
+            success, failed = await process_ticker_batch_async(db, batch, start_date, end_date)
+            total_success += success
+            total_failed += failed
         
-        st.info("💡 **Tip:** Hover over any date on the charts below to see a vertical line across all subplots with synchronized data.")
+        # Get all trading dates from database
+        trading_dates = await db.get_trading_dates(start_date, end_date)
         
-        # Calculate bullish/bearish percentages FIRST (before merging)
-        hist_df['macd_bullish_pct'] = ((hist_df['macd_troughing'].astype(int) + hist_df['macd_confirmed_trough'].astype(int) + hist_df['macd_rising'].astype(int)) / hist_df['total_tickers'].astype(int) * 100).fillna(0)
-        hist_df['macd_bearish_pct'] = ((hist_df['macd_peaking'].astype(int) + hist_df['macd_confirmed_peak'].astype(int) + hist_df['macd_falling'].astype(int)) / hist_df['total_tickers'].astype(int) * 100).fillna(0)
+        if trading_dates:
+            # Process dates in batches for breadth calculation
+            date_batch_size = 20
+            for i in range(0, len(trading_dates), date_batch_size):
+                date_batch = trading_dates[i:i + date_batch_size]
+                
+                if progress_callback:
+                    progress_callback(
+                        len(tickers) + i,
+                        len(tickers) + len(trading_dates),
+                        f"Calculating breadth for {len(date_batch)} dates"
+                    )
+                
+                await process_date_batch_async(db, date_batch)
         
-        # Load VNINDEX data - USE SAME DATE RANGE AS HISTORICAL BREADTH DATA
-        vnindex_start = hist_df['date'].min().date() - timedelta(days=100)  # Extra days for EMA50 calculation
-        vnindex_end = hist_df['date'].max().date()
-        vnindex_df = load_price_range('VNINDEX', vnindex_start, vnindex_end)
-        
-        if vnindex_df.empty:
-            st.warning("⚠️ VNINDEX data not available.")
+        return (total_success, total_failed)
+    
+    # Run with proper event loop handling
+    try:
+        loop = asyncio.get_event_loop()
+        if loop.is_running():
+            # If loop is running (Jupyter/Streamlit), create new loop
+            import concurrent.futures
+            with concurrent.futures.ThreadPoolExecutor() as executor:
+                future = executor.submit(asyncio.run, run())
+                return future.result()
         else:
-            # Sort by date ASCENDING for proper TA calculations
-            vnindex_df = vnindex_df.sort_values('date', ascending=True).copy()
+            # If no loop is running, use asyncio.run
+            return asyncio.run(run())
+    except RuntimeError:
+        # Fallback: create new event loop
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            return loop.run_until_complete(run())
+        finally:
+            loop.close()
+
+def save_indicators_to_db(ticker: str, df: pd.DataFrame) -> bool:
+    """Save calculated indicators to database."""
+    try:
+        from pymongo import MongoClient
+        mongo_uri = os.getenv("MONGODB_URI")
+        if not mongo_uri:
+            return False
             
-            # Calculate technical indicators
-            vnindex_df['close'] = pd.to_numeric(vnindex_df['close'], errors='coerce')
-            
-            close_array = vnindex_df['close'].values.astype(np.float64)
-            
-            # Use TA-Lib if available, otherwise manual
-            if HAS_TALIB:
-                try:
-                    vnindex_df['ema10'] = talib.EMA(close_array, timeperiod=10)
-                    vnindex_df['ema20'] = talib.EMA(close_array, timeperiod=20)
-                    vnindex_df['ema50'] = talib.EMA(close_array, timeperiod=50)
-                    vnindex_df['rsi'] = talib.RSI(close_array, timeperiod=14)
-                    
-                    # Bollinger Bands
-                    bb_upper, bb_middle, bb_lower = talib.BBANDS(close_array, timeperiod=20, nbdevup=2, nbdevdn=2)
-                    vnindex_df['bb_upper'] = bb_upper
-                    vnindex_df['bb_middle'] = bb_middle
-                    vnindex_df['bb_lower'] = bb_lower
-                    
-                    # MACD
-                    macd_line, macd_signal, macd_hist_vals = talib.MACD(close_array, fastperiod=12, slowperiod=26, signalperiod=9)
-                    vnindex_df['macd_line'] = macd_line
-                    vnindex_df['macd_signal'] = macd_signal
-                    vnindex_df['macd_hist'] = macd_hist_vals
-                except Exception as e:
-                    st.warning(f"⚠️ TA-Lib calculation error: {e}. Using manual calculations.")
-                    # Fallback to manual
-                    vnindex_df['ema10'] = vnindex_df['close'].ewm(span=10, adjust=False).mean()
-                    vnindex_df['ema20'] = vnindex_df['close'].ewm(span=20, adjust=False).mean()
-                    vnindex_df['ema50'] = vnindex_df['close'].ewm(span=50, adjust=False).mean()
-                    vnindex_df['rsi'] = calculate_rsi_manual(vnindex_df)
-                    vnindex_df['bb_middle'] = vnindex_df['close'].rolling(20).mean()
-                    bb_std = vnindex_df['close'].rolling(20).std()
-                    vnindex_df['bb_upper'] = vnindex_df['bb_middle'] + (bb_std * 2)
-                    vnindex_df['bb_lower'] = vnindex_df['bb_middle'] - (bb_std * 2)
-                    macd_line, macd_signal, macd_hist_vals = macd_hist(vnindex_df['close'])
-                    vnindex_df['macd_line'] = macd_line
-                    vnindex_df['macd_signal'] = macd_signal
-                    vnindex_df['macd_hist'] = macd_hist_vals
-            else:
-                # Manual calculation
-                vnindex_df['ema10'] = vnindex_df['close'].ewm(span=10, adjust=False).mean()
-                vnindex_df['ema20'] = vnindex_df['close'].ewm(span=20, adjust=False).mean()
-                vnindex_df['ema50'] = vnindex_df['close'].ewm(span=50, adjust=False).mean()
-                vnindex_df['rsi'] = calculate_rsi_manual(vnindex_df)
-                vnindex_df['bb_middle'] = vnindex_df['close'].rolling(20).mean()
-                bb_std = vnindex_df['close'].rolling(20).std()
-                vnindex_df['bb_upper'] = vnindex_df['bb_middle'] + (bb_std * 2)
-                vnindex_df['bb_lower'] = vnindex_df['bb_middle'] - (bb_std * 2)
-                macd_line, macd_signal, macd_hist_vals = macd_hist(vnindex_df['close'])
-                vnindex_df['macd_line'] = macd_line
-                vnindex_df['macd_signal'] = macd_signal
-                vnindex_df['macd_hist'] = macd_hist_vals
-            
-            # Merge with historical breadth - maintain ascending order
-            vnindex_merged = vnindex_df.merge(
-                hist_df[['date', 'ma20_pct', 'rsi_oversold', 'rsi_overbought', 'total_tickers', 'macd_bullish_pct', 'macd_bearish_pct']],
-                on='date',
-                how='left'
-            )
-            
-            # Filter to breadth date range and maintain ascending order
-            vnindex_merged = vnindex_merged[
-                (vnindex_merged['date'] >= hist_df['date'].min()) &
-                (vnindex_merged['date'] <= hist_df['date'].max())
-            ].sort_values('date', ascending=True).reset_index(drop=True)
-            
-            # Define peak/bottom regions based on breadth indicators
-            # Bottom region: MA20 < 30% OR RSI oversold > 20% OR MACD bullish > 60%
-            vnindex_merged['is_bottom'] = (
-                (vnindex_merged['ma20_pct'] < 30) |
-                ((vnindex_merged['rsi_oversold'] / vnindex_merged['total_tickers'] * 100) > 20) |
-                (vnindex_merged['macd_bullish_pct'] > 60)
-            )
-            
-            # Peak region: MA20 > 70% OR RSI overbought > 20% OR MACD bearish > 60%
-            vnindex_merged['is_peak'] = (
-                (vnindex_merged['ma20_pct'] > 70) |
-                ((vnindex_merged['rsi_overbought'] / vnindex_merged['total_tickers'] * 100) > 20) |
-                (vnindex_merged['macd_bearish_pct'] > 60)
-            )
-            
-            # Create figure with subplots
-            fig_vnindex = make_subplots(
-                rows=4, cols=1,
-                row_heights=[0.4, 0.2, 0.2, 0.2],
-                subplot_titles=('VNINDEX Price with EMAs & Bollinger Bands', 'Volume', 'RSI (14)', 'MACD Histogram'),
-                vertical_spacing=0.05,
-                specs=[[{"secondary_y": False}], [{"secondary_y": False}], [{"secondary_y": False}], [{"secondary_y": False}]]
-            )
-            
-            # Add shaded regions for peaks and bottoms to all subplots
-            for row in range(1, 5):
-                # Add bottom regions (green shade) - find contiguous regions
-                bottom_dates = vnindex_merged[vnindex_merged['is_bottom']]['date']
-                if len(bottom_dates) > 0:
-                    # Group contiguous dates
-                    regions = []
-                    start_date = bottom_dates.iloc[0]
-                    prev_idx = vnindex_merged[vnindex_merged['date'] == start_date].index[0]
-                    
-                    for i, date in enumerate(bottom_dates):
-                        curr_idx = vnindex_merged[vnindex_merged['date'] == date].index[0]
-                        # Check if this is a new region (gap in indices)
-                        if i > 0 and curr_idx - prev_idx > 1:
-                            # End previous region
-                            regions.append((start_date, bottom_dates.iloc[i-1]))
-                            start_date = date
-                        prev_idx = curr_idx
-                    
-                    # Add last region
-                    regions.append((start_date, bottom_dates.iloc[-1]))
-                    
-                    # Draw rectangles for each region
-                    for start, end in regions:
-                        fig_vnindex.add_vrect(
-                            x0=start, x1=end,
-                            fillcolor="green", opacity=0.1, layer="below", line_width=0,
-                            row=row, col=1
-                        )
+        client = MongoClient(mongo_uri + "&socketTimeoutMS=60000&connectTimeoutMS=60000")
+        db_name = os.getenv("MONGODB_DB_NAME", "macd_reversal")
+        collection = client[db_name].indicators
+        
+        for _, row in df.iterrows():
+            if pd.notna(row.get('date')):
+                # Convert date to datetime if it's a Timestamp
+                date_value = row['date']
+                if isinstance(date_value, pd.Timestamp):
+                    date_value = date_value.to_pydatetime()
                 
-                # Add peak regions (red shade) - find contiguous regions
-                peak_dates = vnindex_merged[vnindex_merged['is_peak']]['date']
-                if len(peak_dates) > 0:
-                    # Group contiguous dates
-                    regions = []
-                    start_date = peak_dates.iloc[0]
-                    prev_idx = vnindex_merged[vnindex_merged['date'] == start_date].index[0]
-                    
-                    for i, date in enumerate(peak_dates):
-                        curr_idx = vnindex_merged[vnindex_merged['date'] == date].index[0]
-                        # Check if this is a new region (gap in indices)
-                        if i > 0 and curr_idx - prev_idx > 1:
-                            # End previous region
-                            regions.append((start_date, peak_dates.iloc[i-1]))
-                            start_date = date
-                        prev_idx = curr_idx
-                    
-                    # Add last region
-                    regions.append((start_date, peak_dates.iloc[-1]))
-                    
-                    # Draw rectangles for each region
-                    for start, end in regions:
-                        fig_vnindex.add_vrect(
-                            x0=start, x1=end,
-                            fillcolor="red", opacity=0.1, layer="below", line_width=0,
-                            row=row, col=1
-                        )
-            
-            # Row 1: Price with EMAs and Bollinger Bands
-            fig_vnindex.add_trace(go.Scatter(
-                x=vnindex_merged['date'], y=vnindex_merged['close'],
-                name='VNINDEX', line=dict(color='#1f77b4', width=2)
-            ), row=1, col=1)
-            
-            fig_vnindex.add_trace(go.Scatter(
-                x=vnindex_merged['date'], y=vnindex_merged['ema10'],
-                name='EMA10', line=dict(color='#ff7f0e', width=1, dash='dot')
-            ), row=1, col=1)
-            
-            fig_vnindex.add_trace(go.Scatter(
-                x=vnindex_merged['date'], y=vnindex_merged['ema20'],
-                name='EMA20', line=dict(color='#2ca02c', width=1, dash='dash')
-            ), row=1, col=1)
-            
-            fig_vnindex.add_trace(go.Scatter(
-                x=vnindex_merged['date'], y=vnindex_merged['ema50'],
-                name='EMA50', line=dict(color='#d62728', width=1.5)
-            ), row=1, col=1)
-            
-            # Bollinger Bands
-            fig_vnindex.add_trace(go.Scatter(
-                x=vnindex_merged['date'], y=vnindex_merged['bb_upper'],
-                name='BB Upper', line=dict(color='gray', width=1, dash='dot'),
-                showlegend=False
-            ), row=1, col=1)
-            
-            fig_vnindex.add_trace(go.Scatter(
-                x=vnindex_merged['date'], y=vnindex_merged['bb_lower'],
-                name='BB Lower', line=dict(color='gray', width=1, dash='dot'),
-                fill='tonexty', fillcolor='rgba(128,128,128,0.1)',
-                showlegend=False
-            ), row=1, col=1)
-            
-            # Row 2: Volume
-            fig_vnindex.add_trace(go.Bar(
-                x=vnindex_merged['date'], y=vnindex_merged['volume'],
-                name='Volume', marker_color='#9467bd', showlegend=False
-            ), row=2, col=1)
-            
-            # Row 3: RSI
-            fig_vnindex.add_trace(go.Scatter(
-                x=vnindex_merged['date'], y=vnindex_merged['rsi'],
-                name='RSI', line=dict(color='#8c564b', width=2),
-                showlegend=False
-            ), row=3, col=1)
-            
-            fig_vnindex.add_hline(y=70, line_dash="dash", line_color="red", row=3, col=1, annotation_text="Overbought (70)")
-            fig_vnindex.add_hline(y=30, line_dash="dash", line_color="green", row=3, col=1, annotation_text="Oversold (30)")
-            fig_vnindex.add_hline(y=50, line_dash="dot", line_color="gray", row=3, col=1)
-            
-            # Row 4: MACD Histogram
-            colors = ['#2ca02c' if v >= 0 else '#d62728' for v in vnindex_merged['macd_hist']]
-            fig_vnindex.add_trace(go.Bar(
-                x=vnindex_merged['date'], y=vnindex_merged['macd_hist'],
-                name='MACD Hist', marker_color=colors,
-                showlegend=False
-            ), row=4, col=1)
-            
-            fig_vnindex.add_trace(go.Scatter(
-                x=vnindex_merged['date'], y=vnindex_merged['macd_line'],
-                name='MACD Line', line=dict(color='blue', width=1.5),
-                showlegend=False
-            ), row=4, col=1)
-            
-            fig_vnindex.add_trace(go.Scatter(
-                x=vnindex_merged['date'], y=vnindex_merged['macd_signal'],
-                name='Signal', line=dict(color='orange', width=1.5),
-                showlegend=False
-            ), row=4, col=1)
-            
-            fig_vnindex.add_hline(y=0, line_dash="solid", line_color="black", row=4, col=1)
-            
-            # Update layout with synchronized hover
-            fig_vnindex.update_layout(
-                height=1000,
-                hovermode='x unified',
-                showlegend=True,
-                legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
-                title_text="VNINDEX Technical Analysis with Market Breadth Context",
-                xaxis=dict(matches='x'),
-                xaxis2=dict(matches='x'),
-                xaxis3=dict(matches='x'),
-                xaxis4=dict(matches='x')
-            )
-            
-            # Add prominent vertical line on hover for all x-axes
-            for i in range(1, 5):
-                fig_vnindex.update_xaxes(
-                    showspikes=True,
-                    spikemode='across',
-                    spikesnap='cursor',
-                    spikecolor='rgba(255,0,0,0.5)',  # More visible red color
-                    spikethickness=2,  # Thicker line
-                    spikedash='solid',
-                    row=i, col=1
+                indicators = {
+                    'ticker': ticker.upper(),
+                    'date': date_value,
+                    'close': float(row.get('close', np.nan)),
+                    'ema10': float(row.get('ema10', np.nan)),
+                    'ema20': float(row.get('ema20', np.nan)),
+                    'ema50': float(row.get('ema50', np.nan)),
+                    'ema100': float(row.get('ema100', np.nan)),
+                    'ema200': float(row.get('ema200', np.nan)),
+                    'rsi': float(row.get('rsi', np.nan)),
+                    'macd': float(row.get('macd', np.nan)),
+                    'macd_signal': float(row.get('macd_signal', np.nan)),
+                    'macd_hist': float(row.get('macd_hist', np.nan)),
+                    'macd_stage': str(row.get('macd_stage', 'N/A')),
+                    'bb_upper': float(row.get('bb_upper', np.nan)),
+                    'bb_middle': float(row.get('bb_middle', np.nan)),
+                    'bb_lower': float(row.get('bb_lower', np.nan)),
+                    'updated_at': datetime.now()
+                }
+                
+                collection.update_one(
+                    {"ticker": ticker.upper(), "date": date_value},
+                    {"$set": indicators},
+                    upsert=True
                 )
+        
+        client.close()
+        return True
+    except Exception as e:
+        st.error(f"Error saving indicators: {e}")
+        return False
+
+def get_indicators_for_date(target_date: datetime) -> pd.DataFrame:
+    """Get all indicators for all tickers on a specific date."""
+    try:
+        from pymongo import MongoClient
+        mongo_uri = os.getenv("MONGODB_URI")
+        if not mongo_uri:
+            return pd.DataFrame()
             
-            st.plotly_chart(fig_vnindex, width='stretch')
+        client = MongoClient(mongo_uri + "&socketTimeoutMS=60000&connectTimeoutMS=60000")
+        db_name = os.getenv("MONGODB_DB_NAME", "macd_reversal")
+        collection = client[db_name].indicators
+        
+        docs = list(collection.find({"date": target_date}))
+        client.close()
+        
+        if not docs:
+            return pd.DataFrame()
+        
+        df = pd.DataFrame(docs)
+        if '_id' in df.columns:
+            df = df.drop('_id', axis=1)
+        
+        return df
+    except Exception as e:
+        st.error(f"Error loading indicators: {e}")
+        return pd.DataFrame()
+
+def convert_numpy_types(obj):
+    """
+    Convert numpy types to Python native types for MongoDB compatibility.
+    
+    Args:
+        obj: Object that may contain numpy types
+    
+    Returns:
+        Object with numpy types converted to Python native types
+    """
+    if isinstance(obj, dict):
+        return {key: convert_numpy_types(value) for key, value in obj.items()}
+    elif isinstance(obj, list):
+        return [convert_numpy_types(item) for item in obj]
+    elif isinstance(obj, np.integer):
+        return int(obj)
+    elif isinstance(obj, np.floating):
+        return float(obj)
+    elif isinstance(obj, np.ndarray):
+        return obj.tolist()
+    elif isinstance(obj, pd.Timestamp):
+        return obj.to_pydatetime()
+    else:
+        return obj
+
+def calculate_market_breadth(df_indicators: pd.DataFrame) -> dict:
+    """Calculate market breadth from indicators DataFrame."""
+    if df_indicators.empty:
+        return {}
+    
+    total_tickers = len(df_indicators)
+    
+    breadth = {
+        'total_tickers': total_tickers,
+        'date': df_indicators['date'].iloc[0] if 'date' in df_indicators.columns else None
+    }
+    
+    # EMA breadth
+    for period in [10, 20, 50, 100, 200]:
+        col = f'ema{period}'
+        if col in df_indicators.columns:
+            above = df_indicators.apply(
+                lambda row: check_price_above_ema(row.get('close', np.nan), row.get(col, np.nan)),
+                axis=1
+            ).sum()
+            breadth[f'above_ema{period}'] = above
+            breadth[f'above_ema{period}_pct'] = (above / total_tickers * 100) if total_tickers > 0 else 0
+    
+    # RSI breadth
+    if 'rsi' in df_indicators.columns:
+        df_indicators['rsi_category'] = df_indicators['rsi'].apply(categorize_rsi)
+        
+        # Count valid RSI values (exclude N/A)
+        rsi_valid_count = (df_indicators['rsi_category'] != 'N/A').sum()
+        rsi_na_count = (df_indicators['rsi_category'] == 'N/A').sum()
+        breadth['rsi_valid_tickers'] = rsi_valid_count
+        breadth['rsi_na_tickers'] = rsi_na_count
+        
+        for category in ['oversold', '<50', '>50', 'overbought']:
+            count = (df_indicators['rsi_category'] == category).sum()
+            breadth[f'rsi_{category}'] = count
+            # Use valid count as denominator (exclude N/A tickers)
+            breadth[f'rsi_{category}_pct'] = (count / rsi_valid_count * 100) if rsi_valid_count > 0 else 0
+    
+    # MACD breadth
+    if 'macd_stage' in df_indicators.columns:
+        df_indicators['macd_category'] = df_indicators['macd_stage'].apply(categorize_macd_stage)
+        
+        # Count valid MACD values (exclude N/A)
+        macd_valid_count = (df_indicators['macd_category'] != 'N/A').sum()
+        macd_na_count = (df_indicators['macd_category'] == 'N/A').sum()
+        breadth['macd_valid_tickers'] = macd_valid_count
+        breadth['macd_na_tickers'] = macd_na_count
+        
+        for category in ['troughing', 'confirmed_trough', 'rising', 'peaking', 'confirmed_peak', 'declining']:
+            count = (df_indicators['macd_category'] == category).sum()
+            breadth[f'macd_{category}'] = count
+            # Use valid count as denominator (exclude N/A tickers)
+            breadth[f'macd_{category}_pct'] = (count / macd_valid_count * 100) if macd_valid_count > 0 else 0
+    
+    return breadth
+
+def save_market_breadth(date: datetime, breadth_data: dict) -> bool:
+    """Save market breadth to database."""
+    try:
+        from pymongo import MongoClient
+        mongo_uri = os.getenv("MONGODB_URI")
+        if not mongo_uri:
+            return False
             
-            # Add interpretation guide
-            with st.expander("📖 How to Read This Chart"):
-                st.markdown("""
-                **Shaded Regions:**
-                - 🟢 **Green shading**: Market bottom conditions detected
-                  - MA20 breadth < 30% OR
-                  - High RSI oversold (>20% of stocks) OR
-                  - High MACD bullish (>60% bullish stages)
-                
-                - 🔴 **Red shading**: Market peak conditions detected
-                  - MA20 breadth > 70% OR
-                  - High RSI overbought (>20% of stocks) OR
-                  - High MACD bearish (>60% bearish stages)
-                
-                **Technical Indicators:**
-                - **EMAs (10/20/50)**: Trend direction and support/resistance levels
-                - **Bollinger Bands**: Volatility and potential reversal zones
-                - **RSI**: Overbought (>70) / Oversold (<30) momentum
-                - **MACD Histogram**: Trend strength and momentum shifts
-                
-                **Trading Signals:**
-                - Look for bullish setups in green (bottom) regions
-                - Consider taking profits or caution in red (peak) regions
-                - Confirm signals across multiple timeframes and breadth indicators
-                """)
+        client = MongoClient(mongo_uri + "&socketTimeoutMS=60000&connectTimeoutMS=60000")
+        db_name = os.getenv("MONGODB_DB_NAME", "macd_reversal")
+        collection = client[db_name].market_breadth
         
-        # --- Moving Average Breadth History ---
-        st.markdown("#### 📊 Moving Average Breadth (Historical)")
+        # Convert numpy types to Python native types
+        clean_breadth_data = convert_numpy_types(breadth_data)
         
-        fig_ma_hist = go.Figure()
-        fig_ma_hist.add_trace(go.Scatter(
-            x=hist_df['date'], y=hist_df['ma20_pct'],
-            name='MA20', line=dict(color='#2196F3', width=2)
-        ))
-        fig_ma_hist.add_trace(go.Scatter(
-            x=hist_df['date'], y=hist_df['ma50_pct'],
-            name='MA50', line=dict(color='#FF9800', width=2)
-        ))
-        fig_ma_hist.add_trace(go.Scatter(
-            x=hist_df['date'], y=hist_df['ma200_pct'],
-            name='MA200', line=dict(color='#9C27B0', width=2)
-        ))
-        
-        fig_ma_hist.add_hline(y=50, line_dash="dash", line_color="gray", annotation_text="50%")
-        fig_ma_hist.add_hline(y=70, line_dash="dot", line_color="green", annotation_text="Bullish (70%)")
-        fig_ma_hist.add_hline(y=30, line_dash="dot", line_color="red", annotation_text="Bearish (30%)")
-        
-        fig_ma_hist.update_layout(
-            title="% of Stocks Above Moving Averages (Time Series)",
-            xaxis_title="Date",
-            yaxis_title="Percentage (%)",
-            height=500,
-            hovermode='x unified',
-            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
-        )
-        
-        # Add prominent vertical line on hover
-        fig_ma_hist.update_xaxes(
-            showspikes=True,
-            spikemode='across',
-            spikesnap='cursor',
-            spikecolor='rgba(255,0,0,0.5)',  # More visible red
-            spikethickness=2,  # Thicker
-            spikedash='solid'
-        )
-        
-        st.plotly_chart(fig_ma_hist, width='stretch')
-        
-        # --- RSI Breadth History ---
-        st.markdown("#### 🔄 RSI Breadth (Historical)")
-        
-        fig_rsi_hist = make_subplots(
-            rows=2, cols=1, 
-            subplot_titles=("RSI Above/Below 50", "RSI Oversold/Overbought"),
-            vertical_spacing=0.15,
-            row_heights=[0.5, 0.5]
-        )
-        
-        # RSI above/below 50 - ensure we're working with numeric Series
-        total_rsi_series = hist_df['rsi_above_50'].astype(int) + hist_df['rsi_below_50'].astype(int)
-        # Avoid division by zero
-        total_rsi_series = total_rsi_series.replace(0, 1)
-        
-        rsi_above_50_pct = (hist_df['rsi_above_50'].astype(int) / total_rsi_series * 100).fillna(0)
-        rsi_below_50_pct = (hist_df['rsi_below_50'].astype(int) / total_rsi_series * 100).fillna(0)
-        
-        fig_rsi_hist.add_trace(go.Scatter(
-            x=hist_df['date'], y=rsi_above_50_pct,
-            name='RSI > 50', fill='tozeroy', line=dict(color='#4CAF50')
-        ), row=1, col=1)
-        fig_rsi_hist.add_trace(go.Scatter(
-            x=hist_df['date'], y=rsi_below_50_pct,
-            name='RSI ≤ 50', fill='tozeroy', line=dict(color='#F44336')
-        ), row=1, col=1)
-        
-        # RSI oversold/overbought
-        rsi_oversold_pct = (hist_df['rsi_oversold'].astype(int) / total_rsi_series * 100).fillna(0)
-        rsi_overbought_pct = (hist_df['rsi_overbought'].astype(int) / total_rsi_series * 100).fillna(0)
-        
-        fig_rsi_hist.add_trace(go.Scatter(
-            x=hist_df['date'], y=rsi_oversold_pct,
-            name='Oversold (<30)', line=dict(color='#00BCD4', width=2)
-        ), row=2, col=1)
-        fig_rsi_hist.add_trace(go.Scatter(
-            x=hist_df['date'], y=rsi_overbought_pct,
-            name='Overbought (>70)', line=dict(color='#FF5722', width=2)
-        ), row=2, col=1)
-        
-        fig_rsi_hist.update_xaxes(title_text="Date", row=2, col=1)
-        fig_rsi_hist.update_yaxes(title_text="Percentage (%)", row=1, col=1)
-        fig_rsi_hist.update_yaxes(title_text="Percentage (%)", row=2, col=1)
-        
-        fig_rsi_hist.update_layout(
-            height=700,
-            hovermode='x unified',
-            showlegend=True,
-            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
-            xaxis=dict(matches='x'),
-            xaxis2=dict(matches='x')
-        )
-        
-        # Add prominent vertical line on hover for both subplots
-        for row_num in [1, 2]:
-            fig_rsi_hist.update_xaxes(
-                showspikes=True,
-                spikemode='across',
-                spikesnap='cursor',
-                spikecolor='rgba(255,0,0,0.5)',  # More visible red
-                spikethickness=2,  # Thicker
-                spikedash='solid',
-                row=row_num, col=1
-            )
-        
-        st.plotly_chart(fig_rsi_hist, width='stretch')
-        
-        # --- MACD Stage Distribution History ---
-        st.markdown("#### 📊 MACD Stage Distribution (Historical)")
-        
-        fig_macd_hist = make_subplots(
-            rows=2, cols=1,
-            subplot_titles=("Bullish vs Bearish MACD Stages", "Detailed MACD Stage Breakdown"),
-            vertical_spacing=0.15,
-            row_heights=[0.4, 0.6]
-        )
-        
-        # Bullish vs Bearish
-        fig_macd_hist.add_trace(go.Scatter(
-            x=hist_df['date'], y=hist_df['macd_bullish_pct'],
-            name='Bullish Stages', fill='tozeroy', line=dict(color='#4CAF50', width=2)
-        ), row=1, col=1)
-        fig_macd_hist.add_trace(go.Scatter(
-            x=hist_df['date'], y=hist_df['macd_bearish_pct'],
-            name='Bearish Stages', fill='tozeroy', line=dict(color='#F44336', width=2)
-        ), row=1, col=1)
-        
-        # Detailed breakdown
-        fig_macd_hist.add_trace(go.Scatter(
-            x=hist_df['date'], y=(hist_df['macd_troughing'] / hist_df['total_tickers'] * 100),
-            name='Troughing', line=dict(color='#c8e6c9', width=1.5)
-        ), row=2, col=1)
-        fig_macd_hist.add_trace(go.Scatter(
-            x=hist_df['date'], y=(hist_df['macd_confirmed_trough'] / hist_df['total_tickers'] * 100),
-            name='Confirmed Trough', line=dict(color='#39ff14', width=2)
-        ), row=2, col=1)
-        fig_macd_hist.add_trace(go.Scatter(
-            x=hist_df['date'], y=(hist_df['macd_rising'] / hist_df['total_tickers'] * 100),
-            name='Rising', line=dict(color='#2e7d32', width=1.5)
-        ), row=2, col=1)
-        fig_macd_hist.add_trace(go.Scatter(
-            x=hist_df['date'], y=(hist_df['macd_peaking'] / hist_df['total_tickers'] * 100),
-            name='Peaking', line=dict(color='#ffccbc', width=1.5)
-        ), row=2, col=1)
-        fig_macd_hist.add_trace(go.Scatter(
-            x=hist_df['date'], y=(hist_df['macd_confirmed_peak'] / hist_df['total_tickers'] * 100),
-            name='Confirmed Peak', line=dict(color='#ff5252', width=2)
-        ), row=2, col=1)
-        fig_macd_hist.add_trace(go.Scatter(
-            x=hist_df['date'], y=(hist_df['macd_falling'] / hist_df['total_tickers'] * 100),
-            name='Falling', line=dict(color='#c62828', width=1.5)
-        ), row=2, col=1)
-        
-        fig_macd_hist.update_xaxes(title_text="Date", row=2, col=1)
-        fig_macd_hist.update_yaxes(title_text="Percentage (%)", row=1, col=1)
-        fig_macd_hist.update_yaxes(title_text="Percentage (%)", row=2, col=1)
-        
-        fig_macd_hist.update_layout(
-            height=800,
-            hovermode='x unified',
-            showlegend=True,
-            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
-            xaxis=dict(matches='x'),
-            xaxis2=dict(matches='x')
-        )
-        
-        # Add prominent vertical line on hover for both subplots
-        for row_num in [1, 2]:
-            fig_macd_hist.update_xaxes(
-                showspikes=True,
-                spikemode='across',
-                spikesnap='cursor',
-                spikecolor='rgba(255,0,0,0.5)',  # More visible red
-                spikethickness=2,  # Thicker
-                spikedash='solid',
-                row=row_num, col=1
-            )
-        
-        st.plotly_chart(fig_macd_hist, width='stretch')
-        
-        # --- Market Sentiment Summary (Historical) ---
-        st.markdown("#### 💡 Market Sentiment Summary (Historical)")
-        
-        # Calculate bullish and bearish signals
-        hist_df['bullish_signals'] = 0
-        hist_df['bearish_signals'] = 0
-        
-        # MA breadth signals
-        hist_df.loc[hist_df['ma20_pct'] > 60, 'bullish_signals'] += 1
-        hist_df.loc[hist_df['ma20_pct'] < 40, 'bearish_signals'] += 1
-        
-        hist_df.loc[hist_df['ma50_pct'] > 60, 'bullish_signals'] += 1
-        hist_df.loc[hist_df['ma50_pct'] < 40, 'bearish_signals'] += 1
-        
-        # RSI signals
-        hist_df.loc[hist_df['rsi_oversold'] > hist_df['rsi_overbought'], 'bullish_signals'] += 1
-        hist_df.loc[hist_df['rsi_overbought'] > hist_df['rsi_oversold'], 'bearish_signals'] += 1
-        
-        # MACD signals
-        bullish_macd_hist = hist_df['macd_confirmed_trough'] + hist_df['macd_troughing']
-        bearish_macd_hist = hist_df['macd_confirmed_peak'] + hist_df['macd_peaking']
-        
-        hist_df.loc[bullish_macd_hist > bearish_macd_hist, 'bullish_signals'] += 1
-        hist_df.loc[bearish_macd_hist > bullish_macd_hist, 'bearish_signals'] += 1
-        
-        # Calculate total signals
-        total_signals = hist_df['bullish_signals'] + hist_df['bearish_signals']
-        hist_df['bullish_signals_pct'] = (hist_df['bullish_signals'] / total_signals * 100).fillna(0)
-        hist_df['bearish_signals_pct'] = (hist_df['bearish_signals'] / total_signals * 100).fillna(0)
-        
-        # Display latest sentiment summary
-        latest_sentiment = hist_df.iloc[-1]
-        
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            st.metric("Bullish Signals", int(latest_sentiment['bullish_signals']), help="Number of bullish market breadth indicators")
-        with col2:
-            st.metric("Bearish Signals", int(latest_sentiment['bearish_signals']), help="Number of bearish market breadth indicators")
-        with col3:
-            if latest_sentiment['bullish_signals'] > latest_sentiment['bearish_signals']:
-                sentiment = "🟢 Bullish"
-                delta = f"+{latest_sentiment['bullish_signals'] - latest_sentiment['bearish_signals']}"
-            elif latest_sentiment['bearish_signals'] > latest_sentiment['bullish_signals']:
-                sentiment = "🔴 Bearish"
-                delta = f"-{latest_sentiment['bearish_signals'] - latest_sentiment['bullish_signals']}"
-            else:
-                sentiment = "⚪ Neutral"
-                delta = "0"
-            st.metric("Overall Sentiment", sentiment, delta)
-        
-        # --- Download Historical Data ---
-        st.markdown("---")
-        st.markdown("### 📥 Download Historical Data")
-        
-        # Prepare historical summary CSV
-        hist_summary_data = {
-            'Date': hist_df['date'],
-            'Bullish Signals': hist_df['bullish_signals'],
-            'Bearish Signals': hist_df['bearish_signals'],
-            'Overall Sentiment': ["Bullish" if bs > sbs else "Bearish" if bs < sbs else "Neutral" for bs, sbs in zip(hist_df['bullish_signals'], hist_df['bearish_signals'])]
+        doc = {
+            "date": date,
+            **clean_breadth_data,
+            "updated_at": datetime.now()
         }
         
-        hist_summary_df = pd.DataFrame(hist_summary_data)
-        
-        st.download_button(
-            "Download Historical Sentiment Summary CSV",
-            hist_summary_df.to_csv(index=False).encode('utf-8'),
-            f"market_breadth_historical_summary_{datetime.now().strftime('%Y%m%d')}.csv",
-            "text/csv"
+        collection.update_one(
+            {"date": date},
+            {"$set": doc},
+            upsert=True
         )
+        
+        client.close()
+        return True
+    except Exception as e:
+        st.error(f"Error saving market breadth: {e}")
+        return False
+
+def get_market_breadth_history(start_date: datetime, end_date: datetime) -> pd.DataFrame:
+    """Get market breadth history from database."""
+    try:
+        from pymongo import MongoClient
+        mongo_uri = os.getenv("MONGODB_URI")
+        if not mongo_uri:
+            return pd.DataFrame()
+            
+        client = MongoClient(mongo_uri + "&socketTimeoutMS=60000&connectTimeoutMS=60000")
+        db_name = os.getenv("MONGODB_DB_NAME", "macd_reversal")
+        collection = client[db_name].market_breadth
+        
+        query = {"date": {"$gte": start_date, "$lte": end_date}}
+        cursor = collection.find(query).sort("date", 1)
+        docs = list(cursor)
+        client.close()
+        
+        if not docs:
+            return pd.DataFrame()
+        
+        df = pd.DataFrame(docs)
+        if '_id' in df.columns:
+            df = df.drop('_id', axis=1)
+        
+        if 'date' in df.columns:
+            df['date'] = pd.to_datetime(df['date'])
+        
+        return df
+    except Exception as e:
+        st.error(f"Error loading breadth history: {e}")
+        return pd.DataFrame()
+
+def plot_vnindex_chart(start_date: datetime, end_date: datetime):
+    """Plot VNINDEX technical chart with all indicators."""
+    try:
+        df = load_price_data_for_ticker('VNINDEX', start_date, end_date)
+        
+        if df.empty:
+            st.warning("No VNINDEX data available")
+            return
+        
+        # Calculate indicators
+        df = calculate_all_indicators(df)
+        
+        # Create subplots
+        fig = make_subplots(
+            rows=3, cols=1,
+            shared_xaxes=True,
+            vertical_spacing=0.05,
+            row_heights=[0.5, 0.25, 0.25],
+            subplot_titles=('VNINDEX Price & Moving Averages', 'RSI(14)', 'MACD Histogram')
+        )
+        
+        # Candlestick chart
+        if all(col in df.columns for col in ['open', 'high', 'low', 'close']):
+            fig.add_trace(
+                go.Candlestick(
+                    x=df['date'],
+                    open=df['open'],
+                    high=df['high'],
+                    low=df['low'],
+                    close=df['close'],
+                    name='VNINDEX'
+                ),
+                row=1, col=1
+            )
+        
+        # EMAs
+        colors = ['#FF6B6B', '#4ECDC4', '#45B7D1', '#FFA07A', '#98D8C8']
+        for i, period in enumerate([10, 20, 50, 100, 200]):
+            col = f'ema{period}'
+            if col in df.columns:
+                fig.add_trace(
+                    go.Scatter(
+                        x=df['date'],
+                        y=df[col],
+                        name=f'EMA{period}',
+                        line=dict(color=colors[i % len(colors)], width=1.5)
+                    ),
+                    row=1, col=1
+                )
+        
+        # Bollinger Bands
+        if all(col in df.columns for col in ['bb_upper', 'bb_lower']):
+            fig.add_trace(
+                go.Scatter(
+                    x=df['date'], y=df['bb_upper'],
+                    name='BB Upper',
+                    line=dict(color='gray', width=1, dash='dot'),
+                    opacity=0.5
+                ),
+                row=1, col=1
+            )
+            fig.add_trace(
+                go.Scatter(
+                    x=df['date'], y=df['bb_lower'],
+                    name='BB Lower',
+                    line=dict(color='gray', width=1, dash='dot'),
+                    fill='tonexty',
+                    opacity=0.3
+                ),
+                row=1, col=1
+            )
+        
+        # RSI
+        if 'rsi' in df.columns:
+            fig.add_trace(
+                go.Scatter(
+                    x=df['date'], y=df['rsi'],
+                    name='RSI',
+                    line=dict(color='purple', width=2)
+                ),
+                row=2, col=1
+            )
+            fig.add_hline(y=70, line_dash="dash", line_color="red", opacity=0.5, row=2, col=1)
+            fig.add_hline(y=30, line_dash="dash", line_color="green", opacity=0.5, row=2, col=1)
+            fig.add_hline(y=50, line_dash="dot", line_color="gray", opacity=0.3, row=2, col=1)
+        
+        # MACD Histogram
+        if 'macd_hist' in df.columns:
+            colors = ['green' if val >= 0 else 'red' for val in df['macd_hist']]
+            fig.add_trace(
+                go.Bar(
+                    x=df['date'], y=df['macd_hist'],
+                    name='MACD Hist',
+                    marker_color=colors
+                ),
+                row=3, col=1
+            )
+        
+        # Update layout
+        fig.update_layout(
+            title='VNINDEX Technical Analysis',
+            xaxis_title='Date',
+            height=900,
+            showlegend=True,
+            hovermode='x unified'
+        )
+        
+        fig.update_yaxes(title_text="Price", row=1, col=1)
+        fig.update_yaxes(title_text="RSI", row=2, col=1, range=[0, 100])
+        fig.update_yaxes(title_text="MACD", row=3, col=1)
+        
+        st.plotly_chart(fig, use_container_width=True)
+        
+    except Exception as e:
+        st.error(f"Error plotting VNINDEX chart: {e}")
+
+def plot_breadth_chart(df_breadth: pd.DataFrame, metric: str, title: str):
+    """Plot a single breadth metric over time."""
+    if df_breadth.empty or metric not in df_breadth.columns:
+        st.warning(f"No data available for {title}")
+        return
+    
+    fig = go.Figure()
+    
+    fig.add_trace(
+        go.Scatter(
+            x=df_breadth['date'],
+            y=df_breadth[metric],
+            mode='lines+markers',
+            name=title,
+            fill='tozeroy',
+            line=dict(width=2)
+        )
+    )
+    
+    fig.update_layout(
+        title=title,
+        xaxis_title='Date',
+        yaxis_title='Percentage (%)',
+        height=400,
+        hovermode='x unified'
+    )
+    
+    st.plotly_chart(fig, use_container_width=True)
+
+# =====================================================================
+# SIDEBAR CONTROLS
+# =====================================================================
+
+with st.sidebar:
+    st.header("📅 Control Panel")
+    
+    # Get latest date
+    latest_date = get_latest_date_from_db()
+    
+    if latest_date is None:
+        st.error("No data found in database")
+        st.stop()
+    
+    st.info(f"Latest data: {latest_date.strftime('%Y-%m-%d')}")
+    
+    # Date selector
+    selected_date = st.date_input(
+        "Select Date",
+        value=latest_date.date(),
+        max_value=latest_date.date()
+    )
+    selected_datetime = datetime.combine(selected_date, datetime.min.time())
+    
+    st.markdown("---")
+    
+    # Recalculation controls
+    st.subheader("🔄 Recalculate Indicators")
+    
+    recalc_enabled = st.checkbox("Enable recalculation", value=False)
+    
+    if recalc_enabled:
+        # Calculation mode
+        calc_mode = st.radio(
+            "Calculation Mode",
+            options=["Missing dates only", "Full range replacement"],
+            help="Missing dates: Only calculate dates without data. Full range: Recalculate entire range."
+        )
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            lookback_days = st.number_input(
+                "Trading days",
+                min_value=10,
+                max_value=1000,
+                value=200,
+                step=10
+            )
+        
+        # Calculate date range
+        calc_end_date = latest_date
+        calendar_days = int(lookback_days * 365 / 252)
+        calc_start_date = calc_end_date - timedelta(days=calendar_days)
+        
+        if calc_mode == "Missing dates only":
+            st.info(f"📅 Range: {calc_start_date.strftime('%Y-%m-%d')} to {calc_end_date.strftime('%Y-%m-%d')} (missing only)")
+        else:
+            st.warning(f"📅 Range: {calc_start_date.strftime('%Y-%m-%d')} to {calc_end_date.strftime('%Y-%m-%d')} (full replacement)")
+        
+        # Batch size configuration
+        ticker_batch_size = st.slider(
+            "Ticker batch size",
+            min_value=5,
+            max_value=50,
+            value=10,
+            step=5,
+            help="Number of tickers to process in parallel. Higher = faster but more memory."
+        )
+        
+        # Processing mode selection
+        use_async = st.checkbox(
+            "Use async batch processing",
+            value=HAS_MOTOR,
+            disabled=not HAS_MOTOR,
+            help="Process tickers in parallel batches (requires motor library)"
+        )
+        
+        if not HAS_MOTOR and use_async:
+            st.warning("⚠️ Motor not installed. Install with: pip install motor")
+        
+        if st.button("▶️ Calculate Now", type="primary"):
+            all_tickers = get_all_tickers_cached()
+            
+            if not all_tickers:
+                st.error("No tickers found")
+            else:
+                progress_bar = st.progress(0)
+                status_text = st.empty()
+                
+                start_time = datetime.now()
+                
+                if use_async and HAS_MOTOR:
+                    # === ASYNC BATCH PROCESSING ===
+                    status_text.text("🚀 Starting async batch processing...")
+                    
+                    def progress_callback(current, total, message):
+                        progress = current / total if total > 0 else 0
+                        progress_bar.progress(min(progress, 1.0))
+                        status_text.text(f"{message} ({current}/{total})")
+                    
+                    try:
+                        success_count, failed_count = run_async_batch_calculation(
+                            all_tickers,
+                            calc_start_date,
+                            calc_end_date,
+                            ticker_batch_size=ticker_batch_size,
+                            progress_callback=progress_callback
+                        )
+                        
+                        elapsed = (datetime.now() - start_time).total_seconds()
+                        
+                        st.success(
+                            f"✅ Async calculation complete in {elapsed:.1f}s!\n\n"
+                            f"- Success: {success_count} tickers\n"
+                            f"- Failed: {failed_count} tickers\n"
+                            f"- Speed: {len(all_tickers)/elapsed:.1f} tickers/sec"
+                        )
+                        
+                    except Exception as e:
+                        st.error(f"Async processing error: {e}")
+                        st.info("Falling back to synchronous processing...")
+                        use_async = False
+                
+                if not use_async or not HAS_MOTOR:
+                    # === SYNCHRONOUS PROCESSING (FALLBACK) ===
+                    success_count = 0
+                    failed_count = 0
+                    
+                    for idx, ticker in enumerate(all_tickers):
+                        status_text.text(f"Processing {ticker} ({idx + 1}/{len(all_tickers)})...")
+                        
+                        try:
+                            df_indicators = calculate_indicators_for_ticker(
+                                ticker,
+                                calc_start_date,
+                                calc_end_date
+                            )
+                            
+                            if not df_indicators.empty:
+                                if save_indicators_to_db(ticker, df_indicators):
+                                    success_count += 1
+                                else:
+                                    failed_count += 1
+                            else:
+                                failed_count += 1
+                        except Exception as e:
+                            failed_count += 1
+                            st.error(f"Error processing {ticker}: {e}")
+                        
+                        progress_bar.progress((idx + 1) / len(all_tickers))
+                    
+                    elapsed = (datetime.now() - start_time).total_seconds()
+                    
+                    st.success(
+                        f"✅ Sync calculation complete in {elapsed:.1f}s!\n\n"
+                        f"- Success: {success_count}\n"
+                        f"- Failed: {failed_count}\n"
+                        f"- Speed: {len(all_tickers)/elapsed:.1f} tickers/sec"
+                    )
+                
+                status_text.empty()
+                progress_bar.empty()
+                
+                # Clear cache
+                st.cache_data.clear()
+                st.rerun()
+    
+    st.markdown("---")
+    
+    # Debug mode toggle
+    debug_mode = st.checkbox("🐛 Debug Mode", value=False, help="Show detailed metrics table and raw data")
+    
+    st.markdown("---")
+    
+    # Indicator selection
+    st.subheader("📊 Filter Indicators")
+    
+    with st.expander("Moving Averages", expanded=True):
+        selected_emas = st.multiselect(
+            "Select EMAs",
+            options=[10, 20, 50, 100, 200],
+            default=[20, 50, 200]
+        )
+    
+    with st.expander("RSI Groups", expanded=True):
+        selected_rsi = st.multiselect(
+            "Select RSI ranges",
+            options=['oversold', '<50', '>50', 'overbought'],
+            default=['oversold', 'overbought']
+        )
+    
+    with st.expander("MACD Stages", expanded=True):
+        selected_macd = st.multiselect(
+            "Select MACD stages",
+            options=['troughing', 'confirmed_trough', 'rising', 'peaking', 'confirmed_peak', 'declining'],
+            default=['confirmed_trough', 'confirmed_peak']
+        )
+
+# =====================================================================
+# MAIN CONTENT
+# =====================================================================
+
+# Load indicators for selected date
+df_indicators = get_indicators_for_date(selected_datetime)
+
+if df_indicators.empty:
+    st.warning(
+        f"⚠️ No indicator data found for {selected_date}.\n\n"
+        "Please enable recalculation in the sidebar to compute indicators."
+    )
+    st.stop()
+
+# Calculate breadth
+breadth = calculate_market_breadth(df_indicators)
+
+# Save breadth to database
+save_market_breadth(selected_datetime, breadth)
+
+# Labels for display
+rsi_labels = {
+    'oversold': 'RSI Oversold (<30)',
+    '<50': 'RSI Below 50',
+    '>50': 'RSI Above 50',
+    'overbought': 'RSI Overbought (>70)'
+}
+
+macd_labels = {
+    'troughing': 'MACD Troughing',
+    'confirmed_trough': 'MACD Confirmed Trough',
+    'rising': 'MACD Rising',
+    'peaking': 'MACD Peaking',
+    'confirmed_peak': 'MACD Confirmed Peak',
+    'declining': 'MACD Declining'
+}
+
+# =====================================================================
+# MAIN VIEW: MARKET BREADTH CHARTS
+# =====================================================================
+
+st.markdown("## 📈 Market Breadth Analysis")
+st.markdown(f"**Date:** {selected_date} | **Total Tickers:** {breadth.get('total_tickers', 0)}")
+
+# =====================================================================
+# PIE CHARTS: Market Distribution
+# =====================================================================
+
+st.markdown("### 📊 Market Distribution (Current Date)")
+
+# Create 3 columns for pie charts
+col_ma, col_rsi, col_macd = st.columns(3)
+
+with col_ma:
+    st.markdown("**Moving Average Position**")
+    # Get MA data for a representative period (e.g., EMA50 or most selected)
+    if selected_emas:
+        # Use the middle period for summary
+        summary_period = 50 if 50 in selected_emas else selected_emas[len(selected_emas)//2]
+        above_count = breadth.get(f'above_ema{summary_period}', 0)
+        below_count = breadth.get('total_tickers', 0) - above_count
+        
+        ma_data = pd.DataFrame({
+            'Category': [f'Above EMA{summary_period}', f'Below EMA{summary_period}'],
+            'Count': [above_count, below_count],
+            'Percentage': [
+                breadth.get(f'above_ema{summary_period}_pct', 0),
+                100 - breadth.get(f'above_ema{summary_period}_pct', 0)
+            ]
+        })
+        
+        fig_ma = go.Figure(data=[go.Pie(
+            labels=ma_data['Category'],
+            values=ma_data['Count'],
+            hole=0.3,
+            marker=dict(colors=['#00CC96', '#EF553B']),
+            textinfo='label+percent',
+            textposition='auto'
+        )])
+        fig_ma.update_layout(
+            showlegend=True,
+            height=300,
+            margin=dict(l=20, r=20, t=30, b=20)
+        )
+        st.plotly_chart(fig_ma, use_container_width=True)
+    else:
+        st.info("Select EMA periods in sidebar")
+
+with col_rsi:
+    st.markdown("**RSI Categories**")
+    if 'rsi' in df_indicators.columns and breadth.get('rsi_valid_tickers', 0) > 0:
+        rsi_categories = ['oversold', '<50', '>50', 'overbought']
+        rsi_data = pd.DataFrame({
+            'Category': [rsi_labels[cat] for cat in rsi_categories],
+            'Count': [breadth.get(f'rsi_{cat}', 0) for cat in rsi_categories],
+            'Percentage': [breadth.get(f'rsi_{cat}_pct', 0) for cat in rsi_categories]
+        })
+        # Filter out zero counts
+        rsi_data = rsi_data[rsi_data['Count'] > 0]
+        
+        if not rsi_data.empty:
+            fig_rsi = go.Figure(data=[go.Pie(
+                labels=rsi_data['Category'],
+                values=rsi_data['Count'],
+                hole=0.3,
+                marker=dict(colors=['#EF553B', '#FFA15A', '#00CC96', '#AB63FA']),
+                textinfo='label+percent',
+                textposition='auto'
+            )])
+            fig_rsi.update_layout(
+                showlegend=True,
+                height=300,
+                margin=dict(l=20, r=20, t=30, b=20)
+            )
+            st.plotly_chart(fig_rsi, use_container_width=True)
+            
+            # Show N/A count if any
+            na_count = breadth.get('rsi_na_tickers', 0)
+            if na_count > 0:
+                st.caption(f"⚠️ {na_count} tickers with insufficient RSI data")
+        else:
+            st.info("No RSI data available")
+    else:
+        st.info("RSI data not available")
+
+with col_macd:
+    st.markdown("**MACD Stages**")
+    if 'macd_stage' in df_indicators.columns and breadth.get('macd_valid_tickers', 0) > 0:
+        macd_categories = ['troughing', 'confirmed_trough', 'rising', 'peaking', 'confirmed_peak', 'declining']
+        macd_data = pd.DataFrame({
+            'Category': [macd_labels[cat] for cat in macd_categories],
+            'Count': [breadth.get(f'macd_{cat}', 0) for cat in macd_categories],
+            'Percentage': [breadth.get(f'macd_{cat}_pct', 0) for cat in macd_categories]
+        })
+        # Filter out zero counts
+        macd_data = macd_data[macd_data['Count'] > 0]
+        
+        if not macd_data.empty:
+            # Color scheme: bullish (green shades) to bearish (red shades)
+            macd_colors = {
+                'MACD Confirmed Trough': '#00CC96',
+                'MACD Troughing': '#66D9A6',
+                'MACD Rising': '#99E6C2',
+                'MACD Peaking': '#FFAA99',
+                'MACD Confirmed Peak': '#EF553B',
+                'MACD Declining': '#FF8866'
+            }
+            colors = [macd_colors.get(cat, '#636EFA') for cat in macd_data['Category']]
+            
+            fig_macd = go.Figure(data=[go.Pie(
+                labels=macd_data['Category'],
+                values=macd_data['Count'],
+                hole=0.3,
+                marker=dict(colors=colors),
+                textinfo='label+percent',
+                textposition='auto'
+            )])
+            fig_macd.update_layout(
+                showlegend=True,
+                height=300,
+                margin=dict(l=20, r=20, t=30, b=20)
+            )
+            st.plotly_chart(fig_macd, use_container_width=True)
+            
+            # Show N/A count if any
+            na_count = breadth.get('macd_na_tickers', 0)
+            if na_count > 0:
+                st.caption(f"⚠️ {na_count} tickers with insufficient MACD data")
+        else:
+            st.info("No MACD data available")
+    else:
+        st.info("MACD data not available")
+
+st.markdown("---")
+
+if debug_mode:
+    # =====================================================================
+    # DEBUG: MARKET BREADTH SUMMARY TABLE
+    # =====================================================================
+    
+    st.markdown("### 🐛 Debug: Breadth Metrics Table")
+    
+    # Create summary table
+    summary_rows = []
+    
+    # EMA breadth
+    for period in selected_emas:
+        count = breadth.get(f'above_ema{period}', 0)
+        pct = breadth.get(f'above_ema{period}_pct', 0)
+        summary_rows.append({
+            'Indicator Group': f'Above EMA{period}',
+            '% of Market': f"{pct:.1f}%",
+            'Count': count,
+            'Total': breadth.get('total_tickers', 0)
+        })
+    
+    # RSI breadth
+    for category in selected_rsi:
+        count = breadth.get(f'rsi_{category}', 0)
+        pct = breadth.get(f'rsi_{category}_pct', 0)
+        summary_rows.append({
+            'Indicator Group': rsi_labels.get(category, category),
+            '% of Market': f"{pct:.1f}%",
+            'Count': count,
+            'Total': breadth.get('total_tickers', 0)
+        })
+    
+    # MACD breadth
+    for category in selected_macd:
+        count = breadth.get(f'macd_{category}', 0)
+        pct = breadth.get(f'macd_{category}_pct', 0)
+        summary_rows.append({
+            'Indicator Group': macd_labels.get(category, category),
+            '% of Market': f"{pct:.1f}%",
+            'Count': count,
+            'Total': breadth.get('total_tickers', 0)
+        })
+    
+    if summary_rows:
+        df_summary = pd.DataFrame(summary_rows)
+        st.dataframe(df_summary, use_container_width=True, hide_index=True)
+    else:
+        st.info("Select indicators in the sidebar to view breadth summary")
+    
+    st.markdown("---")
+
+# =====================================================================
+# BREADTH CHARTS BY INDICATOR GROUP (Main View)
+# =====================================================================
+
+# Prepare ticker lists for hover display
+ticker_lists = {}
+
+# EMA ticker lists
+for period in selected_emas:
+    col = f'ema{period}'
+    if col in df_indicators.columns:
+        tickers_above = df_indicators[
+            df_indicators.apply(
+                lambda row: check_price_above_ema(row.get('close', np.nan), row.get(col, np.nan)),
+                axis=1
+            )
+        ]['ticker'].tolist()
+        ticker_lists[f'ema{period}'] = sorted(tickers_above)
+
+# RSI ticker lists
+if 'rsi' in df_indicators.columns:
+    df_indicators['rsi_category'] = df_indicators['rsi'].apply(categorize_rsi)
+    for category in selected_rsi:
+        tickers_in_cat = df_indicators[df_indicators['rsi_category'] == category]['ticker'].tolist()
+        ticker_lists[f'rsi_{category}'] = sorted(tickers_in_cat)
+
+# MACD ticker lists
+if 'macd_stage' in df_indicators.columns:
+    df_indicators['macd_category'] = df_indicators['macd_stage'].apply(categorize_macd_stage)
+    for category in selected_macd:
+        tickers_in_cat = df_indicators[df_indicators['macd_category'] == category]['ticker'].tolist()
+        ticker_lists[f'macd_{category}'] = sorted(tickers_in_cat)
+
+# Display ticker lists for current date
+with st.expander("📋 View Ticker Lists (Current Date)", expanded=False):
+    tab_ema, tab_rsi, tab_macd = st.tabs(["Moving Averages", "RSI", "MACD"])
+    
+    with tab_ema:
+        for period in selected_emas:
+            tickers = ticker_lists.get(f'ema{period}', [])
+            st.markdown(f"**Above EMA{period}** ({len(tickers)} tickers)")
+            if tickers:
+                st.write(", ".join(tickers))
+            else:
+                st.write("_No tickers_")
+    
+    with tab_rsi:
+        for category in selected_rsi:
+            tickers = ticker_lists.get(f'rsi_{category}', [])
+            st.markdown(f"**{rsi_labels.get(category, category)}** ({len(tickers)} tickers)")
+            if tickers:
+                st.write(", ".join(tickers))
+            else:
+                st.write("_No tickers_")
+    
+    with tab_macd:
+        for category in selected_macd:
+            tickers = ticker_lists.get(f'macd_{category}', [])
+            st.markdown(f"**{macd_labels.get(category, category)}** ({len(tickers)} tickers)")
+            if tickers:
+                st.write(", ".join(tickers))
+            else:
+                st.write("_No tickers_")
+
+# =====================================================================
+# VNINDEX TECHNICAL CHART (with date axis)
+# =====================================================================
+
+st.markdown("## 📊 VNINDEX Technical Analysis")
+st.caption("All charts share synchronized date axes for easy comparison")
+
+chart_lookback = st.slider("Chart lookback (days)", 30, 365, 180)
+chart_start = selected_datetime - timedelta(days=chart_lookback)
+
+plot_vnindex_chart(chart_start, selected_datetime)
+
+# =====================================================================
+# MARKET BREADTH TRENDS (Synchronized with VNINDEX)
+# =====================================================================
+
+st.markdown("## 📈 Market Breadth Trends")
+st.caption(f"Historical breadth data from {chart_start.strftime('%Y-%m-%d')} to {selected_datetime.strftime('%Y-%m-%d')}")
+
+# Load breadth history for same period as VNINDEX chart
+df_breadth_history = get_market_breadth_history(chart_start, selected_datetime)
+
+if not df_breadth_history.empty:
+    # EMA breadth charts
+    if selected_emas:
+        st.markdown("### Moving Average Breadth")
+        cols = st.columns(min(len(selected_emas), 3))
+        for i, period in enumerate(selected_emas):
+            with cols[i % len(cols)]:
+                metric = f'above_ema{period}_pct'
+                plot_breadth_chart(df_breadth_history, metric, f'Above EMA{period}')
+    
+    # RSI breadth charts
+    if selected_rsi:
+        st.markdown("### RSI Breadth")
+        cols = st.columns(min(len(selected_rsi), 2))
+        for i, category in enumerate(selected_rsi):
+            with cols[i % len(cols)]:
+                metric = f'rsi_{category}_pct'
+                plot_breadth_chart(df_breadth_history, metric, rsi_labels.get(category, category))
+    
+    # MACD breadth charts
+    if selected_macd:
+        st.markdown("### MACD Breadth")
+        cols = st.columns(min(len(selected_macd), 2))
+        for i, category in enumerate(selected_macd):
+            with cols[i % len(cols)]:
+                metric = f'macd_{category}_pct'
+                plot_breadth_chart(df_breadth_history, metric, macd_labels.get(category, category))
+else:
+    st.warning("No historical breadth data available. Recalculate indicators to populate history.")
+
+# =====================================================================
+# DEBUG VIEW
+# =====================================================================
+
+with st.expander("🔍 Debug View: All Indicators", expanded=False):
+    st.markdown(f"### Indicators for all tickers on {selected_date}")
+    
+    if not df_indicators.empty:
+        # Select columns to display
+        display_cols = ['ticker', 'close']
+        
+        for period in [10, 20, 50, 100, 200]:
+            col = f'ema{period}'
+            if col in df_indicators.columns:
+                display_cols.append(col)
+        
+        if 'rsi' in df_indicators.columns:
+            display_cols.append('rsi')
+        
+        if 'macd_stage' in df_indicators.columns:
+            display_cols.append('macd_stage')
+        
+        # Filter and format
+        df_debug = df_indicators[display_cols].copy()
+        
+        # Format numeric columns
+        for col in df_debug.columns:
+            if col not in ['ticker', 'macd_stage'] and col in df_debug.columns:
+                df_debug[col] = df_debug[col].apply(lambda x: f"{x:.2f}" if pd.notna(x) else "N/A")
+        
+        st.dataframe(df_debug, use_container_width=True, hide_index=True)
+        
+        # Download button
+        csv = df_indicators.to_csv(index=False)
+        st.download_button(
+            label="📥 Download Full Data (CSV)",
+            data=csv,
+            file_name=f"indicators_{selected_date}.csv",
+            mime="text/csv"
+        )
+    else:
+        st.info("No data to display")
+
+st.markdown("---")
+st.markdown("_Market Breadth Analysis • Data from MongoDB • Built with utils/indicators.py, utils/macd_stage.py, utils/db_async.py_")

@@ -4,14 +4,26 @@ Provides EMA, RSI, MACD, and Bollinger Bands calculations.
 """
 import pandas as pd
 import numpy as np
+import os
 
-# Try to import TA-Lib
+# Try to import TA-Lib with Streamlit Cloud workaround
+HAS_TALIB = False
 try:
     import talib
     HAS_TALIB = True
 except ImportError:
-    HAS_TALIB = False
-    print("⚠️ TA-Lib not installed. Using pandas fallback for indicators.")
+    # Try runtime installation for Streamlit Cloud
+    if os.path.exists('/home/appuser'):  # Streamlit Cloud environment
+        try:
+            from .setup_talib import setup_talib
+            if setup_talib():
+                import talib
+                HAS_TALIB = True
+        except Exception as e:
+            print(f"⚠️ TA-Lib runtime setup failed: {e}")
+    
+    if not HAS_TALIB:
+        print("⚠️ TA-Lib not installed. Using pandas fallback for indicators.")
 
 
 def calculate_ema(close_series: pd.Series, period: int) -> pd.Series:
