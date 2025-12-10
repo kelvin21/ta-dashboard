@@ -264,7 +264,7 @@ async def process_ticker_batch_async(
     return (success_count, failed_count)
 
 async def calculate_and_save_breadth_for_date_async(
-    db: AsyncDatabaseAdapter,
+    db,  # AsyncDatabaseAdapter not imported - motor not supported on Streamlit Cloud
     date: datetime
 ) -> Tuple[datetime, bool]:
     """
@@ -293,7 +293,7 @@ async def calculate_and_save_breadth_for_date_async(
         return (date, False)
 
 async def process_date_batch_async(
-    db: AsyncDatabaseAdapter,
+    db,  # AsyncDatabaseAdapter not imported - motor not supported on Streamlit Cloud
     dates: List[datetime]
 ) -> Tuple[int, int]:
     """
@@ -336,7 +336,9 @@ def run_async_batch_calculation(
         return (0, 0)  # Fall back to sync processing
     
     async def run():
-        db = AsyncDatabaseAdapter()
+        # AsyncDatabaseAdapter not available - this code path not used
+        from utils.db_async import get_sync_db_adapter
+        db = get_sync_db_adapter()  # Note: This won't work with async, but HAS_MOTOR=False prevents execution
         
         total_success = 0
         total_failed = 0
