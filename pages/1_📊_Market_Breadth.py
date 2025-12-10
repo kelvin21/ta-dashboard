@@ -54,6 +54,9 @@ try:
 except ImportError:
     HAS_DB_ADAPTER = False
 
+# Note: Async functions below are disabled since motor is not supported on Streamlit Cloud
+# All processing uses synchronous SyncDatabaseAdapter instead
+
 # Page config
 st.set_page_config(page_title="Market Breadth Analysis", layout="wide", page_icon="📊")
 
@@ -139,7 +142,7 @@ def calculate_indicators_for_ticker(ticker: str, start_date: datetime, end_date:
         return pd.DataFrame()
 
 async def calculate_indicators_for_ticker_async(
-    db: AsyncDatabaseAdapter,
+    db,  # AsyncDatabaseAdapter not imported - motor not supported on Streamlit Cloud
     ticker: str,
     start_date: datetime,
     end_date: datetime
@@ -180,7 +183,7 @@ async def calculate_indicators_for_ticker_async(
         return (ticker, pd.DataFrame())
 
 async def save_ticker_indicators_async(
-    db: AsyncDatabaseAdapter,
+    db,  # AsyncDatabaseAdapter not imported - motor not supported on Streamlit Cloud
     ticker: str,
     df: pd.DataFrame
 ) -> Tuple[str, bool]:
@@ -227,7 +230,7 @@ async def save_ticker_indicators_async(
         return (ticker, False)
 
 async def process_ticker_batch_async(
-    db: AsyncDatabaseAdapter,
+    db,  # AsyncDatabaseAdapter not imported - motor not supported on Streamlit Cloud
     tickers: List[str],
     start_date: datetime,
     end_date: datetime
