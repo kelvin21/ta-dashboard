@@ -252,21 +252,14 @@ def render_breadth_summary(breadth: dict):
 
 def render_action_conclusion(buy_signals: list, sell_signals: list, strategy: str):
     """Render immediate action conclusion card."""
-    st.markdown("""
-    <div class="material-card elevation-4" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white;">
-        <h2 style="margin: 0 0 16px 0; color: white;"><i class="fas fa-bullseye"></i> Immediate Action Plan</h2>
-    """, unsafe_allow_html=True)
     
-    # Buy signals
+    # Build buy signals HTML
+    buy_html = ""
     if buy_signals:
-        st.markdown("""
-        <div style="background: rgba(255,255,255,0.1); padding: 16px; border-radius: 8px; margin-bottom: 16px;">
-            <h3 style="margin: 0 0 12px 0; color: white;"><i class="fas fa-circle" style="color: #4CAF50;"></i> Top Buy Opportunities</h3>
-        """, unsafe_allow_html=True)
-        
+        buy_items = []
         for signal in buy_signals:
             card = format_signal_card(signal, 'buy')
-            st.markdown(f"""
+            buy_items.append(f"""
             <div style="background: rgba(255,255,255,0.15); padding: 12px; border-radius: 6px; margin-bottom: 8px;">
                 <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
                     <span style="font-size: 18px; font-weight: bold;">{card['ticker']}</span>
@@ -280,21 +273,21 @@ def render_action_conclusion(buy_signals: list, sell_signals: list, strategy: st
                 <div style="font-size: 13px; opacity: 0.8;">
                     {card['reason_text']}
                 </div>
-            </div>
-            """, unsafe_allow_html=True)
+            </div>""")
         
-        st.markdown("</div>", unsafe_allow_html=True)
-    
-    # Sell signals
-    if sell_signals:
-        st.markdown("""
+        buy_html = f"""
         <div style="background: rgba(255,255,255,0.1); padding: 16px; border-radius: 8px; margin-bottom: 16px;">
-            <h3 style="margin: 0 0 12px 0; color: white;"><i class="fas fa-circle" style="color: #F44336;"></i> Top Sell/Avoid Positions</h3>
-        """, unsafe_allow_html=True)
-        
+            <h3 style="margin: 0 0 12px 0; color: white;"><i class="fas fa-circle" style="color: #4CAF50;"></i> Top Buy Opportunities</h3>
+            {''.join(buy_items)}
+        </div>"""
+    
+    # Build sell signals HTML
+    sell_html = ""
+    if sell_signals:
+        sell_items = []
         for signal in sell_signals:
             card = format_signal_card(signal, 'sell')
-            st.markdown(f"""
+            sell_items.append(f"""
             <div style="background: rgba(255,255,255,0.15); padding: 12px; border-radius: 6px; margin-bottom: 8px;">
                 <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
                     <span style="font-size: 18px; font-weight: bold;">{card['ticker']}</span>
@@ -308,21 +301,28 @@ def render_action_conclusion(buy_signals: list, sell_signals: list, strategy: st
                 <div style="font-size: 13px; opacity: 0.8;">
                     {card['reason_text']}
                 </div>
-            </div>
-            """, unsafe_allow_html=True)
+            </div>""")
         
-        st.markdown("</div>", unsafe_allow_html=True)
+        sell_html = f"""
+        <div style="background: rgba(255,255,255,0.1); padding: 16px; border-radius: 8px; margin-bottom: 16px;">
+            <h3 style="margin: 0 0 12px 0; color: white;"><i class="fas fa-circle" style="color: #F44336;"></i> Top Sell/Avoid Positions</h3>
+            {''.join(sell_items)}
+        </div>"""
     
-    # Strategy
-    st.markdown(f"""
+    # Render complete card in one go
+    complete_html = f"""<div class="material-card elevation-4" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 24px;">
+        <h2 style="margin: 0 0 16px 0; color: white;"><i class="fas fa-bullseye"></i> Immediate Action Plan</h2>
+        {buy_html}
+        {sell_html}
         <div style="background: rgba(255,255,255,0.2); padding: 16px; border-radius: 8px; border-left: 4px solid #FFD700;">
             <h4 style="margin: 0 0 8px 0; color: white;"><i class="fas fa-lightbulb"></i> Market Strategy</h4>
             <p style="margin: 0; font-size: 16px; line-height: 1.6; color: white;">
                 {strategy}
             </p>
         </div>
-    </div>
-    """, unsafe_allow_html=True)
+    </div>"""
+    
+    st.markdown(complete_html, unsafe_allow_html=True)
 
 def get_ema_position_summary(row: pd.Series) -> str:
     """Get compact EMA position summary."""
