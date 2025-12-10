@@ -321,6 +321,43 @@ def render_action_conclusion(buy_signals: list, sell_signals: list, strategy: st
     </div>
     """, unsafe_allow_html=True)
 
+def get_ema_position_summary(row: pd.Series) -> str:
+    """Get compact EMA position summary."""
+    close = row.get('close', np.nan)
+    if pd.isna(close):
+        return 'N/A'
+    
+    ema_periods = [10, 20, 50, 100, 150, 200]
+    above_emas = []
+    below_emas = []
+    
+    for period in ema_periods:
+        col = f'ema{period}'
+        ema_val = row.get(col, np.nan)
+        if pd.notna(ema_val):
+            if close > ema_val:
+                above_emas.append(period)
+            else:
+                below_emas.append(period)
+    
+    # If above all EMAs, show strongest position
+    if len(above_emas) == len(ema_periods):
+        return f'✅ >EMA10 (All EMAs)'
+    
+    # If below all EMAs
+    if len(below_emas) == len(ema_periods):
+        return f'❌ <EMA200 (All EMAs)'
+    
+    # Show highest EMA above and lowest EMA below
+    if above_emas:
+        highest_above = max(above_emas)
+        return f'✅ >EMA{highest_above}'
+    elif below_emas:
+        lowest_below = min(below_emas)
+        return f'❌ <EMA{lowest_below}'
+    
+    return 'N/A'
+
 def render_ticker_card(row: pd.Series, show_sparkline: bool = False):
     """Render individual ticker card."""
     ticker = row.get('ticker', 'N/A')
@@ -329,6 +366,9 @@ def render_ticker_card(row: pd.Series, show_sparkline: bool = False):
     zone = row.get('ema_zone', 'neutral')
     alignment = row.get('ema_alignment', 'neutral')
     convergence = row.get('ema_convergence', 0)
+    
+    # Get compact EMA summary
+    ema_summary = get_ema_position_summary(row)
     
     # Get distances
     ema20_dist = row.get('ema20_dist', 0)
@@ -341,23 +381,21 @@ def render_ticker_card(row: pd.Series, show_sparkline: bool = False):
     
     with col1:
         st.markdown(f"""
-        <div class="material-card elevation-1" style="padding: 16px;">
-            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
-                <h3 style="margin: 0; color: #212121;">{ticker}</h3>
-                <div style="background: {zone_color}; color: white; padding: 4px 12px; border-radius: 12px; font-size: 12px; font-weight: bold;">
+        <div class="material-card elevation-1" style="padding: 12px;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                <h3 style="margin: 0; color: #212121; font-size: 18px;">{ticker}</h3>
+                <div style="background: {zone_color}; color: white; padding: 3px 10px; border-radius: 10px; font-size: 11px; font-weight: bold;">
                     {zone.upper()}
                 </div>
             </div>
-            <div style="font-size: 24px; font-weight: bold; color: #212121; margin-bottom: 8px;">
-                {close:.2f}
+            <div style="display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 8px;">
+                <span style="font-size: 22px; font-weight: bold; color: #212121;">{close:.2f}</span>
+                <span style="font-size: 13px; color: #757575;">{ema_summary}</span>
             </div>
-            <div style="display: flex; gap: 8px; margin-bottom: 12px;">
-                <span class="chip chip-info">Strength: {strength}/5</span>
-                <span class="chip" style="background: {align_color}; color: white;">{alignment}</span>
-            </div>
-            <div style="font-size: 13px; color: #757575;">
-                EMA20: {format_distance(ema20_dist)} | EMA50: {format_distance(ema50_dist)}<br/>
-                Convergence: {convergence:.2f}%
+            <div style="display: flex; gap: 6px; flex-wrap: wrap;">
+                <span class="chip chip-info" style="height: 24px; line-height: 24px; font-size: 11px; padding: 0 10px;">⭐ {strength}/5</span>
+                <span class="chip" style="background: {align_color}; color: white; height: 24px; line-height: 24px; font-size: 11px; padding: 0 10px;">{alignment}</span>
+                <span class="chip" style="height: 24px; line-height: 24px; font-size: 11px; padding: 0 10px;">📊 {convergence:.1f}%</span>
             </div>
         </div>
         """, unsafe_allow_html=True)
@@ -380,7 +418,7 @@ def render_ticker_card(row: pd.Series, show_sparkline: bool = False):
 # Header
 st.markdown("""
 <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 32px; border-radius: 12px; margin-bottom: 24px; box-shadow: 0 10px 20px rgba(0,0,0,0.19);">
-    <h1 style="color: white; margin: 0; font-size: 42px;">📈 EMA Signals Analysis</h1>
+    <h1 style="color: white; margin: 0; font-size: 42px;">📊 EMA Signals Analysis</h1>
     <p style="color: rgba(255,255,255,0.9); margin: 8px 0 0 0; font-size: 18px;">
         Comprehensive EMA signal analysis for all tickers
     </p>
@@ -405,19 +443,19 @@ with st.sidebar:
     
     st.markdown("---")
     
-    st.markdown("### 🎯 Display Options")
-    show_sparklines = st.checkbox("Show price sparklines", value=False)
-    show_details = st.checkbox("Show detailed metrics", value=True)
+    st.markdown("### ⚙️ Display Options")
+    show_sparklines = st.checkbox("📊 Show price sparklines", value=False)
+    show_details = st.checkbox("📋 Show detailed metrics", value=True)
     
     st.markdown("---")
     
-    st.markdown("### 🔍 Filters")
+    st.markdown("### 🔎 Filters")
     
     # Zone filter
     zone_filter = st.multiselect(
         "Trading Zone",
         options=['buy', 'accumulate', 'distribute', 'sell', 'risk', 'neutral'],
-        default=['buy', 'accumulate']
+        default=['buy', 'accumulate', 'distribute', 'sell', 'risk', 'neutral']
     )
     
     # Strength filter
@@ -481,7 +519,7 @@ render_action_conclusion(buy_signals, sell_signals, strategy)
 st.markdown("---")
 
 # Universe analysis
-st.markdown("## 🌐 Market Universe Analysis")
+st.markdown("## 🌍 Market Universe Analysis")
 
 # Filter tickers
 df_filtered = df_indicators[df_indicators['ticker'] != 'VNINDEX'].copy()
@@ -517,7 +555,7 @@ st.markdown(f"""
 </div>
 """, unsafe_allow_html=True)
 
-st.markdown("### 🎯 Top Ranked Opportunities")
+st.markdown("### 🏆 Top Ranked Opportunities")
 
 if not df_ranked.empty:
     # Display in grid
@@ -560,10 +598,160 @@ if show_details:
         mime="text/csv"
     )
 
+# Methodology section
+st.markdown("---")
+with st.expander("📚 EMA Alignment & Methodology", expanded=False):
+    st.markdown("""
+    ### EMA Calculation Method
+    
+    **Exponential Moving Average (EMA)** gives more weight to recent prices, making it more responsive to price changes than Simple Moving Average (SMA).
+    
+    **Periods Used**: 10, 20, 50, 100, 150, 200 days
+    
+    ---
+    
+    ### EMA Alignment Categories
+    
+    **🟢 Bullish Alignment**
+    - Price > EMA10 > EMA20 > EMA50 > EMA100 > EMA200
+    - All EMAs in proper ascending order
+    - Strong uptrend with momentum
+    - **Action**: Accumulate on dips to EMA10/20
+    
+    **🔴 Bearish Alignment**
+    - Price < EMA10 < EMA20 < EMA50 < EMA100 < EMA200
+    - All EMAs in descending order
+    - Strong downtrend with selling pressure
+    - **Action**: Avoid or wait for EMA50 reclaim
+    
+    **🟡 Mixed Alignment**
+    - EMAs are intertwined
+    - Price crossing between short and medium EMAs
+    - Consolidation or transition phase
+    - **Action**: Wait for clear direction
+    
+    **⚪ Neutral**
+    - Insufficient data or unclear pattern
+    - **Action**: No action until clarity emerges
+    
+    ---
+    
+    ### Trading Zones
+    
+    **🟢 BUY ZONE**
+    - Price > EMA20 > EMA50 > EMA200
+    - Perfect bullish alignment
+    - Strong momentum confirming
+    - **Risk**: Low (riding the trend)
+    
+    **🟢 ACCUMULATE ZONE**
+    - Price > EMA200 but mixed shorter EMAs
+    - Long-term uptrend intact
+    - Potential consolidation before next leg
+    - **Risk**: Medium (selective buying)
+    
+    **🟡 DISTRIBUTE ZONE**
+    - Price < EMA50 but > EMA200
+    - Warning of weakness
+    - Consider reducing exposure
+    - **Risk**: Medium-High (caution)
+    
+    **🔴 SELL ZONE**
+    - Price < EMA50 and approaching EMA200
+    - Breakdown imminent
+    - Protect capital
+    - **Risk**: High (exit positions)
+    
+    **⚫ RISK ZONE**
+    - Price < EMA200
+    - All major supports lost
+    - Avoid new positions
+    - **Risk**: Very High (cash preferred)
+    
+    ---
+    
+    ### Strength Score (1-5)
+    
+    **Calculation Components**:
+    1. Price position vs all EMAs (above = stronger)
+    2. EMA order (proper sequence = stronger)
+    3. Distance from EMAs (further above = stronger)
+    4. Momentum indicators (RSI, MACD if available)
+    
+    **Score Interpretation**:
+    - **5/5**: 🔥 Very Strong - Maximum bullish alignment
+    - **4/5**: ✅ Strong - Clear uptrend
+    - **3/5**: 😐 Neutral - Mixed signals
+    - **2/5**: ⚠️ Weak - Downtrend developing
+    - **1/5**: 🚫 Very Weak - Strong bearish
+    
+    ---
+    
+    ### Convergence Metric
+    
+    **Definition**: Standard deviation of all EMAs relative to their mean
+    
+    **Interpretation**:
+    - **< 2%**: Very tight - Breakout imminent (either direction)
+    - **2-5%**: Moderate - Normal market
+    - **> 5%**: Wide spread - Trending market
+    
+    **Trading Implication**:
+    - Low convergence + bullish setup = Strong breakout potential
+    - Low convergence + bearish setup = Breakdown risk
+    
+    ---
+    
+    ### Signal Scoring Logic
+    
+    **Buy Signals (Score >= 5)**:
+    - ✅ FOMO breakout above EMA50 (+3 points)
+    - ✅ Golden cross (EMA10 > EMA20 > EMA50) (+3 points)
+    - ✅ Above all major EMAs (+2 points)
+    - ✅ Strong momentum (Price > EMA10 > EMA20) (+2 points)
+    - ✅ EMA convergence < 3% (+2 points)
+    - ✅ Near EMA20 support (+1 point)
+    - ✅ RSI oversold < 40 (+2 points)
+    - ✅ MACD bullish (+1 point)
+    
+    **Sell Signals (Score >= 5)**:
+    - ❌ Breakdown below EMA50 (+3 points)
+    - ❌ Critical breakdown below EMA100 (+2 points)
+    - ❌ Death cross (EMA10 < EMA20 < EMA50) (+3 points)
+    - ❌ Below all major EMAs (+2 points)
+    - ❌ Declining momentum (Price < EMA10 < EMA20) (+2 points)
+    - ❌ Failed EMA20 resistance (+1 point)
+    - ❌ Overextended below EMA50 > 10% (+2 points)
+    - ❌ RSI overbought > 70 (+2 points)
+    - ❌ MACD bearish (+1 point)
+    
+    ---
+    
+    ### Data Source & Updates
+    
+    - **Database**: MongoDB (macd_reversal collection)
+    - **Update Frequency**: Daily after market close
+    - **Calculation**: Uses latest available data with 365-day warmup period
+    - **Indicators**: Reuses `utils/indicators.py` with TA-Lib/pandas-ta
+    
+    ---
+    
+    ### Risk Disclaimer
+    
+    ⚠️ **This tool is for educational and informational purposes only.**
+    
+    - EMA signals are lagging indicators (react to past prices)
+    - No guarantee of future performance
+    - Always use proper risk management
+    - Combine with other analysis (fundamentals, volume, market conditions)
+    - Past EMA patterns may not repeat
+    - Recommended: 2-5% position sizing, stop-loss at EMA50/100
+    """, unsafe_allow_html=False)
+
 # Footer
 st.markdown("---")
 st.markdown("""
 <div style="text-align: center; color: #757575; font-size: 14px;">
-    EMA Signals Analysis • Material Design UI • Data from MongoDB
+    📊 EMA Signals Analysis • Material Design UI • Data from MongoDB
 </div>
 """, unsafe_allow_html=True)
