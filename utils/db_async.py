@@ -26,26 +26,14 @@ load_dotenv()
 
 
 class AsyncDatabaseAdapter:
-    """Async MongoDB adapter for market breadth calculations."""
+    """Async MongoDB adapter - NOT SUPPORTED on Streamlit Cloud. Use SyncDatabaseAdapter instead."""
     
     def __init__(self, connection_string: Optional[str] = None):
-        """
-        Initialize async database adapter.
-        
-        Args:
-            connection_string: MongoDB URI (defaults to env variable)
-        """
+        """Raises error - motor not supported on Streamlit Cloud."""
         raise ImportError(
             "AsyncDatabaseAdapter requires motor which is not supported on Streamlit Cloud. " +
             "Use SyncDatabaseAdapter instead: from utils.db_async import get_sync_db_adapter"
         )
-        db_name = os.getenv("MONGODB_DB_NAME", "macd_reversal")
-        self.db = self.client[db_name]
-        
-        # Collections
-        self.price_data = self.db.price_data
-        self.indicators = self.db.indicators
-        self.market_breadth = self.db.market_breadth
     
     async def get_all_tickers(self) -> List[str]:
         """Get list of all unique tickers."""
