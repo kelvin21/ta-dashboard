@@ -520,50 +520,38 @@ def render_ticker_card(row: pd.Series, show_sparkline: bool = False):
     zone_color = get_zone_color(zone)
     
     # Render compact vertical card
-    st.markdown(f"""
-    <div class="material-card elevation-1" style="padding: 12px; margin-bottom: 12px; height: 100%; display: flex; flex-direction: column;">
-        
-        <!-- Header: Ticker & Zone -->
-        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
-            <div style="font-size: 16px; font-weight: bold; color: #212121;">{ticker}</div>
-            <div style="background: {zone_color}; color: white; padding: 4px 8px; border-radius: 8px; font-size: 9px; font-weight: bold;">
-                {zone.upper()}
-            </div>
+    card_html = f"""
+<div class="material-card elevation-1" style="padding: 12px; margin-bottom: 12px; height: 100%; display: flex; flex-direction: column;">
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+        <div style="font-size: 16px; font-weight: bold; color: #212121;">{ticker}</div>
+        <div style="background: {zone_color}; color: white; padding: 4px 8px; border-radius: 8px; font-size: 9px; font-weight: bold;">
+            {zone.upper()}
         </div>
-        
-        <!-- Price & Strength -->
-        <div style="margin-bottom: 8px;">
-            <div style="font-size: 22px; font-weight: bold; color: #2196F3; line-height: 1;">{close:.2f}</div>
-            <div style="font-size: 9px; color: #757575; margin-top: 2px;">Strength: {strength}/5</div>
-        </div>
-        
-        <!-- EMA Dots -->
-        <div style="text-align: center; margin-bottom: 8px; padding: 6px; background: #F5F5F5; border-radius: 6px;">
-            <div style="display: flex; gap: 4px; justify-content: center; margin-bottom: 2px;">
-                {ema_dots}
-            </div>
-            <div style="font-size: 7px; color: #9E9E9E;">10  20  50  100  200</div>
-        </div>
-        
-        <!-- Action Button -->
-        <div style="margin-bottom: 8px;">
-            <div style="background: {action_color}; color: white; padding: 6px 10px; border-radius: 12px; text-align: center; font-size: 10px; font-weight: bold;">
-                {action_text}
-            </div>
-        </div>
-        
-        <!-- Support/Resistance -->
-        <div style="font-size: 9px; color: #757575; text-align: center; margin-bottom: 8px;">
-            {support_resistance}
-        </div>
-        
-        <!-- Signal Comment -->
-        <div style="font-size: 9px; color: #616161; line-height: 1.3; padding: 6px; background: #FAFAFA; border-radius: 4px; flex-grow: 1; border-left: 2px solid {zone_color};">
-            {signal_comment}
-        </div>
-        
     </div>
-    """, unsafe_allow_html=True)
+    <div style="margin-bottom: 8px;">
+        <div style="font-size: 22px; font-weight: bold; color: #2196F3; line-height: 1;">{close:.2f}</div>
+        <div style="font-size: 9px; color: #757575; margin-top: 2px;">Strength: {strength}/5</div>
+    </div>
+    <div style="text-align: center; margin-bottom: 8px; padding: 6px; background: #F5F5F5; border-radius: 6px;">
+        <div style="display: flex; gap: 4px; justify-content: center; margin-bottom: 2px;">
+            {ema_dots}
+        </div>
+        <div style="font-size: 7px; color: #9E9E9E;">10  20  50  100  200</div>
+    </div>
+    <div style="margin-bottom: 8px;">
+        <div style="background: {action_color}; color: white; padding: 6px 10px; border-radius: 12px; text-align: center; font-size: 10px; font-weight: bold;">
+            {action_text}
+        </div>
+    </div>
+    <div style="font-size: 9px; color: #757575; text-align: center; margin-bottom: 8px;">
+        {support_resistance}
+    </div>
+    <div style="font-size: 9px; color: #616161; line-height: 1.3; padding: 6px; background: #FAFAFA; border-radius: 4px; flex-grow: 1; border-left: 2px solid {zone_color};">
+        {signal_comment}
+    </div>
+</div>
+"""
+    st.markdown(card_html, unsafe_allow_html=True)
 
 # =====================================================================
 # MAIN PAGE
