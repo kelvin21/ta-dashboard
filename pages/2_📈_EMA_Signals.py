@@ -23,6 +23,9 @@ if css_path.exists():
     with open(css_path) as f:
         st.markdown(f"<style>{f.read()}</style>", unsafe_allow_html=True)
 
+# Load FontAwesome
+st.markdown('<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/all.min.css">', unsafe_allow_html=True)
+
 # Load environment
 try:
     from dotenv import load_dotenv
@@ -176,13 +179,13 @@ def render_vnindex_card(vnindex_data: pd.Series):
     
     # Determine trend
     if close > ema50 > ema200:
-        trend = "📈 UPTREND"
+        trend = '<i class="fas fa-chart-line"></i> UPTREND'
         trend_color = "#4CAF50"
     elif close < ema50 < ema200:
-        trend = "📉 DOWNTREND"
+        trend = '<i class="fas fa-chart-line" style="transform: scaleY(-1);"></i> DOWNTREND'
         trend_color = "#F44336"
     else:
-        trend = "➡️ SIDEWAYS"
+        trend = '<i class="fas fa-arrows-alt-h"></i> SIDEWAYS'
         trend_color = "#FF9800"
     
     st.markdown(f"""
@@ -223,7 +226,7 @@ def render_breadth_summary(breadth: dict):
     
     st.markdown(f"""
     <div class="material-card elevation-1">
-        <h3 style="margin: 0 0 16px 0; color: #212121;">📊 Market Breadth</h3>
+        <h3 style="margin: 0 0 16px 0; color: #212121;"><i class="fas fa-chart-bar"></i> Market Breadth</h3>
         <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px;">
             <div style="text-align: center;">
                 <div style="font-size: 32px; font-weight: bold; color: #2196F3;">
@@ -251,14 +254,14 @@ def render_action_conclusion(buy_signals: list, sell_signals: list, strategy: st
     """Render immediate action conclusion card."""
     st.markdown("""
     <div class="material-card elevation-4" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white;">
-        <h2 style="margin: 0 0 16px 0; color: white;">🎯 Immediate Action Plan</h2>
+        <h2 style="margin: 0 0 16px 0; color: white;"><i class="fas fa-bullseye"></i> Immediate Action Plan</h2>
     """, unsafe_allow_html=True)
     
     # Buy signals
     if buy_signals:
         st.markdown("""
         <div style="background: rgba(255,255,255,0.1); padding: 16px; border-radius: 8px; margin-bottom: 16px;">
-            <h3 style="margin: 0 0 12px 0; color: white;">🟢 Top Buy Opportunities</h3>
+            <h3 style="margin: 0 0 12px 0; color: white;"><i class="fas fa-circle" style="color: #4CAF50;"></i> Top Buy Opportunities</h3>
         """, unsafe_allow_html=True)
         
         for signal in buy_signals:
@@ -286,7 +289,7 @@ def render_action_conclusion(buy_signals: list, sell_signals: list, strategy: st
     if sell_signals:
         st.markdown("""
         <div style="background: rgba(255,255,255,0.1); padding: 16px; border-radius: 8px; margin-bottom: 16px;">
-            <h3 style="margin: 0 0 12px 0; color: white;">🔴 Top Sell/Avoid Positions</h3>
+            <h3 style="margin: 0 0 12px 0; color: white;"><i class="fas fa-circle" style="color: #F44336;"></i> Top Sell/Avoid Positions</h3>
         """, unsafe_allow_html=True)
         
         for signal in sell_signals:
@@ -313,7 +316,7 @@ def render_action_conclusion(buy_signals: list, sell_signals: list, strategy: st
     # Strategy
     st.markdown(f"""
         <div style="background: rgba(255,255,255,0.2); padding: 16px; border-radius: 8px; border-left: 4px solid #FFD700;">
-            <h4 style="margin: 0 0 8px 0; color: white;">💡 Market Strategy</h4>
+            <h4 style="margin: 0 0 8px 0; color: white;"><i class="fas fa-lightbulb"></i> Market Strategy</h4>
             <p style="margin: 0; font-size: 16px; line-height: 1.6; color: white;">
                 {strategy}
             </p>
@@ -342,19 +345,19 @@ def get_ema_position_summary(row: pd.Series) -> str:
     
     # If above all EMAs, show strongest position
     if len(above_emas) == len(ema_periods):
-        return f'✅ >EMA10 (All EMAs)'
+        return '<i class="fas fa-check-circle" style="color: #4CAF50;"></i> >EMA10 (All EMAs)'
     
     # If below all EMAs
     if len(below_emas) == len(ema_periods):
-        return f'❌ <EMA200 (All EMAs)'
+        return '<i class="fas fa-times-circle" style="color: #F44336;"></i> <EMA200 (All EMAs)'
     
     # Show highest EMA above and lowest EMA below
     if above_emas:
         highest_above = max(above_emas)
-        return f'✅ >EMA{highest_above}'
+        return f'<i class="fas fa-check-circle" style="color: #4CAF50;"></i> >EMA{highest_above}'
     elif below_emas:
         lowest_below = min(below_emas)
-        return f'❌ <EMA{lowest_below}'
+        return f'<i class="fas fa-times-circle" style="color: #F44336;"></i> <EMA{lowest_below}'
     
     return 'N/A'
 
@@ -393,9 +396,9 @@ def render_ticker_card(row: pd.Series, show_sparkline: bool = False):
                 <span style="font-size: 13px; color: #757575;">{ema_summary}</span>
             </div>
             <div style="display: flex; gap: 6px; flex-wrap: wrap;">
-                <span class="chip chip-info" style="height: 24px; line-height: 24px; font-size: 11px; padding: 0 10px;">⭐ {strength}/5</span>
+                <span class="chip chip-info" style="height: 24px; line-height: 24px; font-size: 11px; padding: 0 10px;"><i class="fas fa-star"></i> {strength}/5</span>
                 <span class="chip" style="background: {align_color}; color: white; height: 24px; line-height: 24px; font-size: 11px; padding: 0 10px;">{alignment}</span>
-                <span class="chip" style="height: 24px; line-height: 24px; font-size: 11px; padding: 0 10px;">📊 {convergence:.1f}%</span>
+                <span class="chip" style="height: 24px; line-height: 24px; font-size: 11px; padding: 0 10px;"><i class="fas fa-chart-bar"></i> {convergence:.1f}%</span>
             </div>
         </div>
         """, unsafe_allow_html=True)
@@ -418,7 +421,7 @@ def render_ticker_card(row: pd.Series, show_sparkline: bool = False):
 # Header
 st.markdown("""
 <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 32px; border-radius: 12px; margin-bottom: 24px; box-shadow: 0 10px 20px rgba(0,0,0,0.19);">
-    <h1 style="color: white; margin: 0; font-size: 42px;">📊 EMA Signals Analysis</h1>
+    <h1 style="color: white; margin: 0; font-size: 42px;"><i class="fas fa-chart-line"></i> EMA Signals Analysis</h1>
     <p style="color: rgba(255,255,255,0.9); margin: 8px 0 0 0; font-size: 18px;">
         Comprehensive EMA signal analysis for all tickers
     </p>
@@ -427,7 +430,7 @@ st.markdown("""
 
 # Sidebar
 with st.sidebar:
-    st.markdown("### 📅 Analysis Settings")
+    st.markdown("### <i class='far fa-calendar'></i> Analysis Settings", unsafe_allow_html=True)
     
     latest_date = get_latest_date_from_db()
     if latest_date:
@@ -443,13 +446,13 @@ with st.sidebar:
     
     st.markdown("---")
     
-    st.markdown("### ⚙️ Display Options")
-    show_sparklines = st.checkbox("📊 Show price sparklines", value=False)
-    show_details = st.checkbox("📋 Show detailed metrics", value=True)
+    st.markdown("### <i class='fas fa-cog'></i> Display Options", unsafe_allow_html=True)
+    show_sparklines = st.checkbox("Show price sparklines", value=False)
+    show_details = st.checkbox("Show detailed metrics", value=True)
     
     st.markdown("---")
     
-    st.markdown("### 🔎 Filters")
+    st.markdown("### <i class='fas fa-filter'></i> Filters", unsafe_allow_html=True)
     
     # Zone filter
     zone_filter = st.multiselect(
@@ -471,7 +474,7 @@ with st.sidebar:
     st.markdown("---")
     
     # Recalculate button
-    if st.button("🔄 Recalculate", type="primary"):
+    if st.button("Recalculate", type="primary"):
         st.cache_data.clear()
         st.rerun()
 
@@ -519,7 +522,7 @@ render_action_conclusion(buy_signals, sell_signals, strategy)
 st.markdown("---")
 
 # Universe analysis
-st.markdown("## 🌍 Market Universe Analysis")
+st.markdown("## <i class='fas fa-globe'></i> Market Universe Analysis", unsafe_allow_html=True)
 
 # Filter tickers
 df_filtered = df_indicators[df_indicators['ticker'] != 'VNINDEX'].copy()
@@ -555,7 +558,7 @@ st.markdown(f"""
 </div>
 """, unsafe_allow_html=True)
 
-st.markdown("### 🏆 Top Ranked Opportunities")
+st.markdown("### <i class='fas fa-trophy'></i> Top Ranked Opportunities", unsafe_allow_html=True)
 
 if not df_ranked.empty:
     # Display in grid
@@ -578,7 +581,7 @@ else:
 # Detailed table
 if show_details:
     st.markdown("---")
-    st.markdown("### 📋 Detailed Metrics Table")
+    st.markdown("### <i class='fas fa-list'></i> Detailed Metrics Table", unsafe_allow_html=True)
     
     display_cols = ['ticker', 'close', 'ema_strength', 'ema_zone', 'ema_alignment', 
                     'ema_convergence', 'ema20_dist', 'ema50_dist']
@@ -592,7 +595,7 @@ if show_details:
     # Export button
     csv = df_display.to_csv(index=False)
     st.download_button(
-        label="📥 Download CSV",
+        label="Download CSV",
         data=csv,
         file_name=f"ema_signals_{selected_date}.csv",
         mime="text/csv"
@@ -600,7 +603,7 @@ if show_details:
 
 # Methodology section
 st.markdown("---")
-with st.expander("📚 EMA Alignment & Methodology", expanded=False):
+with st.expander("EMA Alignment & Methodology", expanded=False):
     st.markdown("""
     ### EMA Calculation Method
     
@@ -752,6 +755,6 @@ with st.expander("📚 EMA Alignment & Methodology", expanded=False):
 st.markdown("---")
 st.markdown("""
 <div style="text-align: center; color: #757575; font-size: 14px;">
-    📊 EMA Signals Analysis • Material Design UI • Data from MongoDB
+    <i class="fas fa-chart-bar"></i> EMA Signals Analysis • Material Design UI • Data from MongoDB
 </div>
 """, unsafe_allow_html=True)
