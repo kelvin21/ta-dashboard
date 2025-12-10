@@ -622,17 +622,25 @@ def detect_momentum_flag(row: pd.Series) -> tuple:
     """
     Detect momentum stage and return (flag_type, icon, color, tooltip).
     
-    Flags:
+    Strong Stock Flags:
     1. Strong Momentum (Green) - Ride the trend
     2. Early Peak Warning (Orange) - Potential topping zone
     3. Profit-Taking Pressure (Red) - Weakening momentum
     4. Exit Trigger (Dark Gray) - Momentum breakdown
+    
+    Weak Stock Flags:
+    1. Trend Continuation Bearish (Dark Red)
+    2. Mean Reversion Bounce (Blue) - Oversold
+    3. Base Building (Teal) - Reversal setup
+    4. Short Squeeze (Purple) - Momentum reversal burst
     """
     close = row.get('close', np.nan)
     ema10 = row.get('ema10', np.nan)
     ema20 = row.get('ema20', np.nan)
     ema50 = row.get('ema50', np.nan)
+    ema200 = row.get('ema200', np.nan)
     rsi = row.get('rsi', 50)
+    volume = row.get('volume', 0)
     
     # Get MACD histogram (try both column names)
     macd_hist = row.get('macd_histogram', row.get('macd_hist', 0))
@@ -646,59 +654,116 @@ def detect_momentum_flag(row: pd.Series) -> tuple:
     if pd.isna(rsi):
         rsi = 50
     
+    # Handle missing EMA200
+    if pd.isna(ema200):
+        ema200 = close * 1.1  # Assume above if missing
+    
     # Calculate distance from EMA20
     ema20_distance_pct = ((close - ema20) / ema20) * 100 if ema20 != 0 else 0
     
-    # 4️⃣ Exit Trigger (Momentum Breakdown) - HIGHEST PRIORITY
-    if (close < ema20 and 
-        ema10 < ema20 and 
-        macd_stage in ['declining', 'confirmed_peak'] and 
-        rsi < 50):
-        return (
-            'exit',
-            '<i class="fas fa-skull-crossbones"></i>',
-            '#424242',
-            'Exit Zone: Price below EMA20, EMA10 crossed below EMA20, MACD declining, RSI &lt; 50'
-        )
+    # Determine if stock is weak (below EMA200)
+    is_weak_stock = close < ema200
     
-    # 3️⃣ Profit-Taking Pressure Detected
-    if (close < ema10 and 
-        close > ema20 and 
-        macd_hist < 0 and 
-        rsi < 60):
-        return (
-            'profit_taking',
-            '<i class="fas fa-exclamation-circle"></i>',
-            '#F44336',
-            'Profit-Taking Pressure: Price below EMA10, MACD histogram declining, RSI dropped from high'
-        )
+    # ========== STRONG STOCK FLAGS (price > EMA200) ==========
+    if not is_weak_stock:
+        # 4️⃣ Exit Trigger (Momentum Breakdown) - HIGHEST PRIORITY
+        if (close < ema20 and 
+            ema10 < ema20 and 
+            macd_stage in ['declining', 'confirmed_peak'] and 
+            rsi < 50):
+            return (
+                'exit',
+                '<i class="fas fa-skull-crossbones"></i>',
+                '#424242',
+                'Exit Zone: Price below EMA20, EMA10 crossed below EMA20, MACD declining, RSI &lt; 50'
+            )
+        
+        # 3️⃣ Profit-Taking Pressure Detected
+        if (close < ema10 and 
+            close > ema20 and 
+            macd_hist < 0 and 
+            rsi < 60):
+            return (
+                'profit_taking',
+                '<i class="fas fa-exclamation-circle"></i>',
+                '#F44336',
+                'Profit-Taking Pressure: Price below EMA10, MACD histogram declining, RSI dropped from high'
+            )
+        
+        # 2️⃣ Early Peak Warning (Potential Topping Zone)
+        if (close > ema10 and 
+            close > ema20 and 
+            rsi > 70 and 
+            macd_stage == 'peaking' and 
+            ema20_distance_pct > 10):
+            return (
+                'peak_warning',
+                '<i class="fas fa-exclamation-triangle"></i>',
+                '#FF9800',
+                f'Early Peak Warning: RSI &gt; 70, MACD peaking, price +{ema20_distance_pct:.1f}% above EMA20'
+            )
+        
+        # 1️⃣ Strong Momentum (Ride the Trend)
+        if (close > ema10 and 
+            close > ema20 and 
+            ema10 > ema20 and 
+            ema20 > ema50 and 
+            rsi > 60 and 
+            macd_hist > 0):
+            return (
+                'strong_momentum',
+                '<i class="fas fa-rocket"></i>',
+                '#4CAF50',
+                f'Strong Momentum: Price &gt; EMA10/20, aligned EMAs, RSI {rsi:.0f}, MACD rising'
+            )
     
-    # 2️⃣ Early Peak Warning (Potential Topping Zone)
-    if (close > ema10 and 
-        close > ema20 and 
-        rsi > 70 and 
-        macd_stage == 'peaking' and 
-        ema20_distance_pct > 10):
-        return (
-            'peak_warning',
-            '<i class="fas fa-exclamation-triangle"></i>',
-            '#FF9800',
-            f'Early Peak Warning: RSI &gt; 70, MACD peaking, price +{ema20_distance_pct:.1f}% above EMA20'
-        )
-    
-    # 1️⃣ Strong Momentum (Ride the Trend)
-    if (close > ema10 and 
-        close > ema20 and 
-        ema10 > ema20 and 
-        ema20 > ema50 and 
-        rsi > 60 and 
-        macd_hist > 0):
-        return (
-            'strong_momentum',
-            '<i class="fas fa-rocket"></i>',
-            '#4CAF50',
-            f'Strong Momentum: Price &gt; EMA10/20, aligned EMAs, RSI {rsi:.0f}, MACD rising'
-        )
+    # ========== WEAK STOCK FLAGS (price < EMA200) ==========
+    else:
+        # Get previous RSI if available (for short squeeze detection)
+        # For now, we'll use a simplified check
+        
+        # 4️⃣ Short Squeeze / Momentum Reversal Burst - HIGHEST PRIORITY
+        if (close > ema20 and 
+            close > ema50 and 
+            rsi > 60 and 
+            macd_stage in ['rising', 'troughing']):
+            return (
+                'short_squeeze',
+                '<i class="fas fa-bolt"></i>',
+                '#9C27B0',
+                f'Short Squeeze Alert: Price broke above EMA20/50, RSI {rsi:.0f}, MACD rising - momentum reversal'
+            )
+        
+        # 3️⃣ Base Building (Reversal Setup)
+        if (rsi > 50 and 
+            macd_stage in ['rising', 'troughing']):
+            return (
+                'base_building',
+                '<i class="fas fa-layer-group"></i>',
+                '#009688',
+                f'Base Building: RSI &gt; 50, MACD rising, potential reversal setup'
+            )
+        
+        # 2️⃣ Mean Reversion Bounce (Oversold)
+        if (rsi < 30 or macd_stage in ['troughing', 'confirmed_trough']):
+            return (
+                'mean_reversion',
+                '<i class="fas fa-undo"></i>',
+                '#2196F3',
+                f'Oversold Bounce: RSI {rsi:.0f} &lt; 30 or MACD troughing - potential bounce'
+            )
+        
+        # 1️⃣ Trend Continuation (Bearish)
+        if (ema20 < ema50 and 
+            not pd.isna(ema200) and ema50 < ema200 and
+            rsi < 50 and 
+            macd_stage in ['peaking', 'declining']):
+            return (
+                'trend_bearish',
+                '<i class="fas fa-arrow-trend-down"></i>',
+                '#B71C1C',
+                f'Bearish Trend: Price &lt; EMA200, bearish EMA alignment, RSI {rsi:.0f}, MACD declining'
+            )
     
     # No flag
     return ('none', '', '', '')
