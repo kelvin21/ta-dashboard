@@ -273,6 +273,23 @@ def calculate_all_indicators(df: pd.DataFrame, ema_periods=None, rsi_period=14,
     df['macd'] = macd_line
     df['macd_signal'] = signal_line
     df['macd_hist'] = hist
+    df['macd_histogram'] = hist  # Alias for compatibility
+    
+    # Calculate MACD stage (simplified for momentum detection)
+    try:
+        from .macd_utils import get_simple_macd_stage
+        
+        # Calculate stage for each row using current and previous histogram
+        df['macd_stage'] = 'neutral'
+        for i in range(1, len(df)):
+            if pd.notna(df.iloc[i]['macd_hist']) and pd.notna(df.iloc[i-1]['macd_hist']):
+                df.at[df.index[i], 'macd_stage'] = get_simple_macd_stage(
+                    df.iloc[i]['macd_hist'],
+                    df.iloc[i-1]['macd_hist']
+                )
+    except Exception as e:
+        # If MACD stage calculation fails, continue without it
+        df['macd_stage'] = 'neutral'
     
     # Calculate Bollinger Bands
     upper, middle, lower = calculate_bollinger_bands(df['close'], *bb_params)

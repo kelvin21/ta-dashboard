@@ -633,15 +633,21 @@ def detect_momentum_flag(row: pd.Series) -> tuple:
     ema20 = row.get('ema20', np.nan)
     ema50 = row.get('ema50', np.nan)
     rsi = row.get('rsi', 50)
-    macd_hist = row.get('macd_histogram', 0)
+    
+    # Get MACD histogram (try both column names)
+    macd_hist = row.get('macd_histogram', row.get('macd_hist', 0))
     macd_stage = row.get('macd_stage', 'neutral')
     
     # Check for missing data
     if any(pd.isna(v) for v in [close, ema10, ema20, ema50]):
         return ('none', '', '', '')
     
+    # Handle NaN RSI
+    if pd.isna(rsi):
+        rsi = 50
+    
     # Calculate distance from EMA20
-    ema20_distance_pct = ((close - ema20) / ema20) * 100
+    ema20_distance_pct = ((close - ema20) / ema20) * 100 if ema20 != 0 else 0
     
     # 4️⃣ Exit Trigger (Momentum Breakdown) - HIGHEST PRIORITY
     if (close < ema20 and 
@@ -942,6 +948,23 @@ st.markdown(f"""
 st.markdown("### <i class='fas fa-trophy'></i> Top Ranked Opportunities", unsafe_allow_html=True)
 
 if not df_ranked.empty:
+    # Debug: Show raw data for first ticker
+    if st.sidebar.checkbox("Show debug info", value=False):
+        with st.expander("🔍 Debug: First Ticker Raw Data"):
+            first_ticker = df_ranked.iloc[0]
+            st.write("**Ticker:**", first_ticker['ticker'])
+            st.write("**Available columns:**", list(first_ticker.index))
+            st.write("**MACD Stage:**", first_ticker.get('macd_stage', 'NOT FOUND'))
+            st.write("**MACD Histogram:**", first_ticker.get('macd_histogram', first_ticker.get('macd_hist', 'NOT FOUND')))
+            st.write("**RSI:**", first_ticker.get('rsi', 'NOT FOUND'))
+            st.write("**EMA10:**", first_ticker.get('ema10', 'NOT FOUND'))
+            st.write("**EMA20:**", first_ticker.get('ema20', 'NOT FOUND'))
+            st.write("**EMA50:**", first_ticker.get('ema50', 'NOT FOUND'))
+            
+            # Test momentum detection
+            momentum_result = detect_momentum_flag(first_ticker)
+            st.write("**Momentum Detection Result:**", momentum_result)
+    
     # Display cards in 4 columns for desktop view
     num_cols = 4
     rows = []
