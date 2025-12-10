@@ -475,11 +475,13 @@ def get_ema_dots(row: pd.Series) -> str:
     
     return ' '.join(dots)
 
-def get_nearest_support_resistance(row: pd.Series) -> str:
-    """Get nearest EMA support or resistance."""
+def get_nearest_support_resistance(row: pd.Series) -> tuple:
+    """Get nearest EMA support or resistance with percentage distance.
+    Returns: (level_text, percentage, is_support)
+    """
     close = row.get('close', 0)
     if close == 0:
-        return 'N/A'
+        return ('N/A', 0, True)
     
     ema_periods = [10, 20, 50, 100, 200]
     
@@ -498,12 +500,61 @@ def get_nearest_support_resistance(row: pd.Series) -> str:
     # Get nearest
     if supports:
         nearest_support = max(supports, key=lambda x: x[1])  # Highest EMA below
-        return f'S: EMA{nearest_support[0]} ({nearest_support[1]:.2f})'
+        pct = ((close - nearest_support[1]) / nearest_support[1]) * 100
+        return (f'EMA{nearest_support[0]}', pct, True)
     elif resistances:
         nearest_resistance = min(resistances, key=lambda x: x[1])  # Lowest EMA above
-        return f'R: EMA{nearest_resistance[0]} ({nearest_resistance[1]:.2f})'
+        pct = ((nearest_resistance[1] - close) / close) * 100
+        return (f'EMA{nearest_resistance[0]}', pct, False)
     
-    return 'N/A'
+    return ('N/A', 0, True)
+
+def get_alignment_rating_icon(alignment: str) -> str:
+    """Get FontAwesome icon for EMA alignment rating."""
+    icons = {
+        'bullish': '<i class="fas fa-arrow-up" style="color: #4CAF50;"></i>',
+        'bearish': '<i class="fas fa-arrow-down" style="color: #F44336;"></i>',
+        'mixed': '<i class="fas fa-arrows-alt-h" style="color: #FF9800;"></i>',
+        'neutral': '<i class="fas fa-minus" style="color: #9E9E9E;"></i>'
+    }
+    return icons.get(alignment, icons['neutral'])
+
+def detect_ema_retest(row: pd.Series, ticker: str, lookback_days: int = 30) -> tuple:
+    """Detect if stock has retested nearest support/resistance EMA recently.
+    Returns: (has_retest, retest_count, ema_level)
+    """
+    close = row.get('close', 0)
+    if close == 0:
+        return (False, 0, 'N/A')
+    
+    # Get nearest support/resistance
+    sr_level, _, is_support = get_nearest_support_resistance(row)
+    
+    if sr_level == 'N/A':
+        return (False, 0, 'N/A')
+    
+    # Extract period from level (e.g., "EMA20" -> 20)
+    try:
+        period = int(sr_level.replace('EMA', ''))
+        ema_val = row.get(f'ema{period}', np.nan)
+        
+        if pd.isna(ema_val):
+            return (False, 0, sr_level)
+        
+        # For simplified detection, check if price is near the EMA (within 2%)
+        distance_pct = abs((close - ema_val) / ema_val) * 100
+        
+        if distance_pct < 2:
+            # Price is testing the EMA currently
+            return (True, 1, sr_level)
+        elif distance_pct < 5:
+            # Price is close to EMA
+            return (True, 0, sr_level)
+        else:
+            return (False, 0, sr_level)
+            
+    except (ValueError, KeyError):
+        return (False, 0, sr_level)
 
 def render_ticker_card(row: pd.Series, show_sparkline: bool = False):
     """Render compact vertical ticker card for 4-column grid layout."""
@@ -511,25 +562,45 @@ def render_ticker_card(row: pd.Series, show_sparkline: bool = False):
     close = row.get('close', 0)
     strength = row.get('ema_strength', 3)
     zone = row.get('ema_zone', 'neutral')
+    alignment = row.get('ema_alignment', 'neutral')
     
     # Generate components
     signal_comment = generate_signal_comment(row)
     action_text, action_color = generate_action_recommendation(row)
     ema_dots = get_ema_dots(row)
-    support_resistance = get_nearest_support_resistance(row)
+    sr_level, sr_pct, is_support = get_nearest_support_resistance(row)
     zone_color = get_zone_color(zone)
+    alignment_icon = get_alignment_rating_icon(alignment)
+    has_retest, retest_count, retest_ema = detect_ema_retest(row, ticker)
+    
+    # Format support/resistance display
+    sr_type = 'S' if is_support else 'R'
+    sr_color = '#4CAF50' if is_support else '#F44336'
+    sr_display = f'{sr_type}: {sr_level} ({sr_pct:+.1f}%)' if sr_level != 'N/A' else 'N/A'
+    
+    # Format retest indicator
+    if has_retest and retest_count > 0:
+        retest_badge = f'<span style="background: #FF9800; color: white; padding: 2px 6px; border-radius: 8px; font-size: 8px; font-weight: bold;">TESTING {retest_ema}</span>'
+    elif has_retest:
+        retest_badge = f'<span style="background: #2196F3; color: white; padding: 2px 6px; border-radius: 8px; font-size: 8px; font-weight: bold;">NEAR {retest_ema}</span>'
+    else:
+        retest_badge = ''
     
     # Render compact vertical card
     card_html = f"""
 <div class="material-card elevation-1" style="padding: 12px; margin-bottom: 12px; height: 100%; display: flex; flex-direction: column;">
     <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
-        <div style="font-size: 16px; font-weight: bold; color: #212121;">{ticker}</div>
+        <div style="display: flex; align-items: center; gap: 6px;">
+            <div style="font-size: 16px; font-weight: bold; color: #212121;">{ticker}</div>
+            {alignment_icon}
+        </div>
         <div style="background: {zone_color}; color: white; padding: 4px 8px; border-radius: 8px; font-size: 9px; font-weight: bold;">
             {zone.upper()}
         </div>
     </div>
     <div style="margin-bottom: 8px;">
         <div style="font-size: 22px; font-weight: bold; color: #2196F3; line-height: 1;">{close:.2f}</div>
+        <div style="font-size: 9px; color: {sr_color}; margin-top: 2px; font-weight: 600;">{sr_display}</div>
         <div style="font-size: 9px; color: #757575; margin-top: 2px;">Strength: {strength}/5</div>
     </div>
     <div style="text-align: center; margin-bottom: 8px; padding: 6px; background: #F5F5F5; border-radius: 6px;">
@@ -543,8 +614,8 @@ def render_ticker_card(row: pd.Series, show_sparkline: bool = False):
             {action_text}
         </div>
     </div>
-    <div style="font-size: 9px; color: #757575; text-align: center; margin-bottom: 8px;">
-        {support_resistance}
+    <div style="text-align: center; margin-bottom: 8px; min-height: 16px;">
+        {retest_badge}
     </div>
     <div style="font-size: 9px; color: #616161; line-height: 1.3; padding: 6px; background: #FAFAFA; border-radius: 4px; flex-grow: 1; border-left: 2px solid {zone_color};">
         {signal_comment}
