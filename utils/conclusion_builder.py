@@ -386,21 +386,21 @@ def format_signal_card(signal: Dict, signal_type: str) -> Dict:
     
     # Priority label
     if score >= 10:
-        priority = "🔥 URGENT"
+        priority = "URGENT"
         priority_color = "#F44336"
     elif score >= 7:
-        priority = "⚡ HIGH"
+        priority = "HIGH"
         priority_color = "#FF9800"
     else:
-        priority = "📌 MEDIUM"
+        priority = "MEDIUM"
         priority_color = "#2196F3"
     
     # Action label
     if signal_type == 'buy':
-        action = "🟢 BUY"
+        action = "BUY"
         action_color = "#4CAF50"
     else:
-        action = "🔴 SELL"
+        action = "SELL"
         action_color = "#F44336"
     
     return {
@@ -413,5 +413,5 @@ def format_signal_card(signal: Dict, signal_type: str) -> Dict:
         'close': close,
         'reasons': reasons,
         'rsi': rsi,
-        'reason_text': " • ".join(reasons[:3])  # Top 3 reasons
+        'reason_text': " &bull; ".join(reasons[:3])  # Top 3 reasons with HTML entity
     }
