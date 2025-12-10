@@ -506,7 +506,7 @@ def get_nearest_support_resistance(row: pd.Series) -> str:
     return 'N/A'
 
 def render_ticker_card(row: pd.Series, show_sparkline: bool = False):
-    """Render compact single-row ticker card with 5 columns."""
+    """Render compact vertical ticker card for 4-column grid layout."""
     ticker = row.get('ticker', 'N/A')
     close = row.get('close', 0)
     strength = row.get('ema_strength', 3)
@@ -519,48 +519,49 @@ def render_ticker_card(row: pd.Series, show_sparkline: bool = False):
     support_resistance = get_nearest_support_resistance(row)
     zone_color = get_zone_color(zone)
     
-    # Render single-row card
+    # Render compact vertical card
     st.markdown(f"""
-    <div class="material-card elevation-1" style="padding: 10px 16px; margin-bottom: 8px;">
-        <div style="display: grid; grid-template-columns: 1fr 2fr 1.5fr 1fr 1fr; gap: 16px; align-items: center;">
-            
-            <!-- Column 1: Ticker & Price -->
-            <div>
-                <div style="font-size: 16px; font-weight: bold; color: #212121; margin-bottom: 2px;">{ticker}</div>
-                <div style="font-size: 20px; font-weight: bold; color: #2196F3;">{close:.2f}</div>
-                <div style="font-size: 10px; color: #757575; margin-top: 2px;">Strength: {strength}/5</div>
+    <div class="material-card elevation-1" style="padding: 12px; margin-bottom: 12px; height: 100%; display: flex; flex-direction: column;">
+        
+        <!-- Header: Ticker & Zone -->
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+            <div style="font-size: 16px; font-weight: bold; color: #212121;">{ticker}</div>
+            <div style="background: {zone_color}; color: white; padding: 4px 8px; border-radius: 8px; font-size: 9px; font-weight: bold;">
+                {zone.upper()}
             </div>
-            
-            <!-- Column 2: Signal Comment -->
-            <div style="font-size: 11px; color: #424242; line-height: 1.4;">
-                {signal_comment}
-            </div>
-            
-            <!-- Column 3: Action Recommendation -->
-            <div>
-                <div style="background: {action_color}; color: white; padding: 6px 12px; border-radius: 16px; text-align: center; font-size: 11px; font-weight: bold; margin-bottom: 4px;">
-                    {action_text}
-                </div>
-                <div style="font-size: 10px; color: #757575; text-align: center;">{support_resistance}</div>
-            </div>
-            
-            <!-- Column 4: EMA Indicators -->
-            <div style="text-align: center;">
-                <div style="font-size: 9px; color: #757575; margin-bottom: 4px;">EMA Position</div>
-                <div style="display: flex; gap: 4px; justify-content: center; margin-bottom: 2px;">
-                    {ema_dots}
-                </div>
-                <div style="font-size: 8px; color: #9E9E9E;">10 20 50 100 200</div>
-            </div>
-            
-            <!-- Column 5: Zone Badge -->
-            <div style="text-align: center;">
-                <div style="background: {zone_color}; color: white; padding: 8px 12px; border-radius: 12px; font-size: 11px; font-weight: bold;">
-                    {zone.upper()}
-                </div>
-            </div>
-            
         </div>
+        
+        <!-- Price & Strength -->
+        <div style="margin-bottom: 8px;">
+            <div style="font-size: 22px; font-weight: bold; color: #2196F3; line-height: 1;">{close:.2f}</div>
+            <div style="font-size: 9px; color: #757575; margin-top: 2px;">Strength: {strength}/5</div>
+        </div>
+        
+        <!-- EMA Dots -->
+        <div style="text-align: center; margin-bottom: 8px; padding: 6px; background: #F5F5F5; border-radius: 6px;">
+            <div style="display: flex; gap: 4px; justify-content: center; margin-bottom: 2px;">
+                {ema_dots}
+            </div>
+            <div style="font-size: 7px; color: #9E9E9E;">10  20  50  100  200</div>
+        </div>
+        
+        <!-- Action Button -->
+        <div style="margin-bottom: 8px;">
+            <div style="background: {action_color}; color: white; padding: 6px 10px; border-radius: 12px; text-align: center; font-size: 10px; font-weight: bold;">
+                {action_text}
+            </div>
+        </div>
+        
+        <!-- Support/Resistance -->
+        <div style="font-size: 9px; color: #757575; text-align: center; margin-bottom: 8px;">
+            {support_resistance}
+        </div>
+        
+        <!-- Signal Comment -->
+        <div style="font-size: 9px; color: #616161; line-height: 1.3; padding: 6px; background: #FAFAFA; border-radius: 4px; flex-grow: 1; border-left: 2px solid {zone_color};">
+            {signal_comment}
+        </div>
+        
     </div>
     """, unsafe_allow_html=True)
 
@@ -711,12 +712,20 @@ st.markdown(f"""
 st.markdown("### <i class='fas fa-trophy'></i> Top Ranked Opportunities", unsafe_allow_html=True)
 
 if not df_ranked.empty:
-    # Display cards in single column for full-width compact layout
-    for _, ticker_row in df_ranked.iterrows():
-        render_ticker_card(
-            df_indicators[df_indicators['ticker'] == ticker_row['ticker']].iloc[0],
-            show_sparkline=show_sparklines
-        )
+    # Display cards in 4 columns for desktop view
+    num_cols = 4
+    rows = []
+    for i in range(0, len(df_ranked), num_cols):
+        rows.append(df_ranked.iloc[i:i+num_cols])
+    
+    for row_df in rows:
+        cols = st.columns(num_cols)
+        for idx, (_, ticker_row) in enumerate(row_df.iterrows()):
+            with cols[idx]:
+                render_ticker_card(
+                    df_indicators[df_indicators['ticker'] == ticker_row['ticker']].iloc[0],
+                    show_sparkline=show_sparklines
+                )
 else:
     st.info("No tickers match the selected filters")
 
