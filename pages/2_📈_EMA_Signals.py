@@ -705,8 +705,6 @@ def detect_momentum_flag(row: pd.Series) -> tuple:
 
 def render_ticker_card(row: pd.Series, show_sparkline: bool = False):
     """Render compact vertical ticker card for 4-column grid layout."""
-    import html
-    
     ticker = row.get('ticker', 'N/A')
     close = row.get('close', 0)
     strength = row.get('ema_strength', 3)
@@ -715,7 +713,7 @@ def render_ticker_card(row: pd.Series, show_sparkline: bool = False):
     convergence = row.get('ema_convergence', 0)
     
     # Generate components
-    signal_comment = html.escape(generate_signal_comment(row)).replace('&bull;', '•')
+    signal_comment = generate_signal_comment(row)
     action_text, action_color = generate_action_recommendation(row)
     ema_dots = get_ema_dots(row)
     sr_level, sr_pct, is_support = get_nearest_support_resistance(row)
@@ -758,48 +756,8 @@ def render_ticker_card(row: pd.Series, show_sparkline: bool = False):
     else:
         momentum_badge = ''
     
-    # Render compact vertical card
-    card_html = f"""<div class="material-card elevation-1" style="padding: 12px; margin-bottom: 12px; height: 100%; display: flex; flex-direction: column;">
-    <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 8px;">
-        <div style="display: flex; flex-direction: column; gap: 2px;">
-            <div style="display: flex; align-items: center; gap: 6px;">
-                <div style="font-size: 16px; font-weight: bold; color: #212121;">{ticker}</div>
-                {alignment_icon}
-            </div>
-            {momentum_badge}
-        </div>
-        <div style="display: flex; flex-direction: column; align-items: flex-end; gap: 4px;">
-            <div style="background: {zone_color}; color: white; padding: 4px 8px; border-radius: 8px; font-size: 9px; font-weight: bold;">
-                {zone.upper()}
-            </div>
-            <div style="display: flex; gap: 3px; padding: 4px 6px; background: #F5F5F5; border-radius: 6px; border: 1px solid #E0E0E0;">
-                {ema_dots}
-            </div>
-        </div>
-    </div>
-    <div style="margin-bottom: 8px;">
-        <div style="font-size: 22px; font-weight: bold; color: #2196F3; line-height: 1;">{close:.2f}</div>
-        <div style="font-size: 9px; color: {sr_color}; margin-top: 2px; font-weight: 600;">{sr_display}</div>
-        <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 2px;">
-            <div style="font-size: 9px; color: #757575;">Strength: {strength}/5</div>
-            <div style="font-size: 9px; color: {conv_color}; display: flex; align-items: center; gap: 3px;">
-                {conv_icon} {convergence:.1f}% {conv_status}
-            </div>
-        </div>
-        {violation_badge}
-    </div>
-    <div style="margin-bottom: 8px;">
-        <div style="background: {action_color}; color: white; padding: 6px 10px; border-radius: 12px; text-align: center; font-size: 10px; font-weight: bold;">
-            {action_text}
-        </div>
-    </div>
-    <div style="text-align: center; margin-bottom: 8px; min-height: 16px;">
-        {retest_badge}
-    </div>
-    <div style="font-size: 9px; color: #616161; line-height: 1.3; padding: 6px; background: #FAFAFA; border-radius: 4px; flex-grow: 1; border-left: 2px solid {zone_color};">
-        {signal_comment}
-    </div>
-</div>"""
+    # Render compact vertical card - use single line HTML to avoid Streamlit rendering issues
+    card_html = f'<div class="material-card elevation-1" style="padding: 12px; margin-bottom: 12px; height: 100%; display: flex; flex-direction: column;"><div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 8px;"><div style="display: flex; flex-direction: column; gap: 2px;"><div style="display: flex; align-items: center; gap: 6px;"><div style="font-size: 16px; font-weight: bold; color: #212121;">{ticker}</div>{alignment_icon}</div>{momentum_badge}</div><div style="display: flex; flex-direction: column; align-items: flex-end; gap: 4px;"><div style="background: {zone_color}; color: white; padding: 4px 8px; border-radius: 8px; font-size: 9px; font-weight: bold;">{zone.upper()}</div><div style="display: flex; gap: 3px; padding: 4px 6px; background: #F5F5F5; border-radius: 6px; border: 1px solid #E0E0E0;">{ema_dots}</div></div></div><div style="margin-bottom: 8px;"><div style="font-size: 22px; font-weight: bold; color: #2196F3; line-height: 1;">{close:.2f}</div><div style="font-size: 9px; color: {sr_color}; margin-top: 2px; font-weight: 600;">{sr_display}</div><div style="display: flex; justify-content: space-between; align-items: center; margin-top: 2px;"><div style="font-size: 9px; color: #757575;">Strength: {strength}/5</div><div style="font-size: 9px; color: {conv_color}; display: flex; align-items: center; gap: 3px;">{conv_icon} {convergence:.1f}% {conv_status}</div></div>{violation_badge}</div><div style="margin-bottom: 8px;"><div style="background: {action_color}; color: white; padding: 6px 10px; border-radius: 12px; text-align: center; font-size: 10px; font-weight: bold;">{action_text}</div></div><div style="text-align: center; margin-bottom: 8px; min-height: 16px;">{retest_badge}</div><div style="font-size: 9px; color: #616161; line-height: 1.3; padding: 6px; background: #FAFAFA; border-radius: 4px; flex-grow: 1; border-left: 2px solid {zone_color};">{signal_comment}</div></div>'
     
     st.markdown(card_html, unsafe_allow_html=True)
 
