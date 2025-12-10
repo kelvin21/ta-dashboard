@@ -519,6 +519,63 @@ def get_alignment_rating_icon(alignment: str) -> str:
     }
     return icons.get(alignment, icons['neutral'])
 
+def get_convergence_rating_icon(convergence: float) -> tuple:
+    """Get icon and color for convergence rating.
+    Returns: (icon_html, color, status_text)
+    """
+    if convergence < 2:
+        # Very tight - breakout imminent
+        return ('<i class="fas fa-compress-arrows-alt" style="font-size: 10px;"></i>', '#FF9800', 'Tight')
+    elif convergence < 5:
+        # Moderate - normal
+        return ('<i class="fas fa-grip-lines" style="font-size: 10px;"></i>', '#2196F3', 'Normal')
+    else:
+        # Wide - trending
+        return ('<i class="fas fa-expand-arrows-alt" style="font-size: 10px;"></i>', '#9C27B0', 'Wide')
+
+def detect_ema_violation(row: pd.Series, ticker: str, lookback_days: int = 30) -> tuple:
+    """Detect if price has violated (crossed) nearest support/resistance EMA in past 30 days.
+    Returns: (has_violation, days_ago, violation_type, ema_level)
+    """
+    close = row.get('close', 0)
+    if close == 0:
+        return (False, 0, 'none', 'N/A')
+    
+    # Get nearest support/resistance
+    sr_level, _, is_support = get_nearest_support_resistance(row)
+    
+    if sr_level == 'N/A':
+        return (False, 0, 'none', 'N/A')
+    
+    # Extract period from level
+    try:
+        period = int(sr_level.replace('EMA', ''))
+        ema_val = row.get(f'ema{period}', np.nan)
+        
+        if pd.isna(ema_val):
+            return (False, 0, 'none', sr_level)
+        
+        # For simplified detection, check if price has crossed the EMA recently
+        # If current price is very close (within 1%) to EMA, assume recent violation
+        distance_pct = abs((close - ema_val) / ema_val) * 100
+        
+        if distance_pct < 1:
+            # Currently at EMA - likely recent cross
+            if is_support:
+                violation_type = 'breakdown' if close < ema_val else 'support_test'
+            else:
+                violation_type = 'breakout' if close > ema_val else 'resistance_test'
+            return (True, 1, violation_type, sr_level)
+        elif distance_pct < 3:
+            # Very close - possible recent interaction
+            return (True, 3, 'near', sr_level)
+        else:
+            # No recent violation detected
+            return (False, 0, 'none', sr_level)
+            
+    except (ValueError, KeyError):
+        return (False, 0, 'none', sr_level)
+
 def detect_ema_retest(row: pd.Series, ticker: str, lookback_days: int = 30) -> tuple:
     """Detect if stock has retested nearest support/resistance EMA recently.
     Returns: (has_retest, retest_count, ema_level)
@@ -563,6 +620,7 @@ def render_ticker_card(row: pd.Series, show_sparkline: bool = False):
     strength = row.get('ema_strength', 3)
     zone = row.get('ema_zone', 'neutral')
     alignment = row.get('ema_alignment', 'neutral')
+    convergence = row.get('ema_convergence', 0)
     
     # Generate components
     signal_comment = generate_signal_comment(row)
@@ -572,6 +630,8 @@ def render_ticker_card(row: pd.Series, show_sparkline: bool = False):
     zone_color = get_zone_color(zone)
     alignment_icon = get_alignment_rating_icon(alignment)
     has_retest, retest_count, retest_ema = detect_ema_retest(row, ticker)
+    conv_icon, conv_color, conv_status = get_convergence_rating_icon(convergence)
+    has_violation, days_ago, violation_type, violation_ema = detect_ema_violation(row, ticker)
     
     # Format support/resistance display
     sr_type = 'S' if is_support else 'R'
@@ -586,28 +646,46 @@ def render_ticker_card(row: pd.Series, show_sparkline: bool = False):
     else:
         retest_badge = ''
     
+    # Format violation indicator
+    if has_violation and violation_type != 'none':
+        if violation_type == 'breakdown':
+            violation_badge = f'<div style="font-size: 8px; color: #F44336; margin-top: 2px;"><i class="fas fa-exclamation-triangle"></i> Broke {violation_ema} ({days_ago}d ago)</div>'
+        elif violation_type == 'breakout':
+            violation_badge = f'<div style="font-size: 8px; color: #4CAF50; margin-top: 2px;"><i class="fas fa-arrow-up"></i> Broke {violation_ema} ({days_ago}d ago)</div>'
+        elif violation_type in ['support_test', 'resistance_test', 'near']:
+            violation_badge = f'<div style="font-size: 8px; color: #FF9800; margin-top: 2px;"><i class="fas fa-dot-circle"></i> Testing {violation_ema}</div>'
+        else:
+            violation_badge = ''
+    else:
+        violation_badge = '<div style="font-size: 8px; color: #9E9E9E; margin-top: 2px;">No recent violations</div>'
+    
     # Render compact vertical card
     card_html = f"""
 <div class="material-card elevation-1" style="padding: 12px; margin-bottom: 12px; height: 100%; display: flex; flex-direction: column;">
-    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+    <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 8px;">
         <div style="display: flex; align-items: center; gap: 6px;">
             <div style="font-size: 16px; font-weight: bold; color: #212121;">{ticker}</div>
             {alignment_icon}
         </div>
-        <div style="background: {zone_color}; color: white; padding: 4px 8px; border-radius: 8px; font-size: 9px; font-weight: bold;">
-            {zone.upper()}
+        <div style="display: flex; flex-direction: column; align-items: flex-end; gap: 4px;">
+            <div style="background: {zone_color}; color: white; padding: 4px 8px; border-radius: 8px; font-size: 9px; font-weight: bold;">
+                {zone.upper()}
+            </div>
+            <div style="display: flex; gap: 3px; padding: 4px 6px; background: #F5F5F5; border-radius: 6px; border: 1px solid #E0E0E0;">
+                {ema_dots}
+            </div>
         </div>
     </div>
     <div style="margin-bottom: 8px;">
         <div style="font-size: 22px; font-weight: bold; color: #2196F3; line-height: 1;">{close:.2f}</div>
         <div style="font-size: 9px; color: {sr_color}; margin-top: 2px; font-weight: 600;">{sr_display}</div>
-        <div style="font-size: 9px; color: #757575; margin-top: 2px;">Strength: {strength}/5</div>
-    </div>
-    <div style="text-align: center; margin-bottom: 8px; padding: 6px; background: #F5F5F5; border-radius: 6px;">
-        <div style="display: flex; gap: 4px; justify-content: center; margin-bottom: 2px;">
-            {ema_dots}
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 2px;">
+            <div style="font-size: 9px; color: #757575;">Strength: {strength}/5</div>
+            <div style="font-size: 9px; color: {conv_color}; display: flex; align-items: center; gap: 3px;">
+                {conv_icon} {convergence:.1f}% {conv_status}
+            </div>
         </div>
-        <div style="font-size: 7px; color: #9E9E9E;">10  20  50  100  200</div>
+        {violation_badge}
     </div>
     <div style="margin-bottom: 8px;">
         <div style="background: {action_color}; color: white; padding: 6px 10px; border-radius: 12px; text-align: center; font-size: 10px; font-weight: bold;">
