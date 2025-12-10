@@ -1,0 +1,597 @@
+/* Material Design CSS for Streamlit Dashboard */
+
+/* ============================================
+   ELEVATION SYSTEM (Material Paper Metaphor)
+   ============================================ */
+
+.elevation-0 {
+    box-shadow: none;
+}
+
+.elevation-1 {
+    box-shadow: 0 1px 3px rgba(0,0,0,0.12), 0 1px 2px rgba(0,0,0,0.24);
+}
+
+.elevation-2 {
+    box-shadow: 0 3px 6px rgba(0,0,0,0.16), 0 3px 6px rgba(0,0,0,0.23);
+}
+
+.elevation-3 {
+    box-shadow: 0 10px 20px rgba(0,0,0,0.19), 0 6px 6px rgba(0,0,0,0.23);
+}
+
+.elevation-4 {
+    box-shadow: 0 14px 28px rgba(0,0,0,0.25), 0 10px 10px rgba(0,0,0,0.22);
+}
+
+.elevation-5 {
+    box-shadow: 0 19px 38px rgba(0,0,0,0.30), 0 15px 12px rgba(0,0,0,0.22);
+}
+
+.elevation-6 {
+    box-shadow: 0 24px 48px rgba(0,0,0,0.35), 0 20px 20px rgba(0,0,0,0.22);
+}
+
+/* ============================================
+   MATERIAL CARDS
+   ============================================ */
+
+.material-card {
+    background: white;
+    border-radius: 8px;
+    padding: 20px;
+    margin: 16px 0;
+    transition: all 0.3s cubic-bezier(0.4, 0.0, 0.2, 1);
+}
+
+.material-card:hover {
+    box-shadow: 0 14px 28px rgba(0,0,0,0.25), 0 10px 10px rgba(0,0,0,0.22);
+    transform: translateY(-4px);
+}
+
+.material-card-header {
+    font-size: 20px;
+    font-weight: 500;
+    color: #212121;
+    margin-bottom: 16px;
+    letter-spacing: 0.15px;
+}
+
+.material-card-subtitle {
+    font-size: 14px;
+    color: #757575;
+    margin-bottom: 12px;
+}
+
+.material-card-content {
+    color: #424242;
+    line-height: 1.5;
+}
+
+/* ============================================
+   COLOR SYSTEM
+   ============================================ */
+
+:root {
+    --primary-color: #1976D2;
+    --primary-dark: #1565C0;
+    --primary-light: #42A5F5;
+    
+    --secondary-color: #00BCD4;
+    --secondary-dark: #0097A7;
+    --secondary-light: #4DD0E1;
+    
+    --accent-color: #FF4081;
+    --accent-dark: #F50057;
+    --accent-light: #FF80AB;
+    
+    --success-color: #4CAF50;
+    --warning-color: #FF9800;
+    --error-color: #F44336;
+    --info-color: #2196F3;
+    
+    --text-primary: #212121;
+    --text-secondary: #757575;
+    --text-disabled: #9E9E9E;
+    --divider-color: #BDBDBD;
+    
+    --background: #FAFAFA;
+    --surface: #FFFFFF;
+}
+
+/* ============================================
+   CHIPS / BADGES
+   ============================================ */
+
+.chip {
+    display: inline-flex;
+    align-items: center;
+    padding: 0 12px;
+    height: 32px;
+    font-size: 13px;
+    line-height: 32px;
+    border-radius: 16px;
+    background-color: #E0E0E0;
+    color: #424242;
+    margin: 4px;
+    font-weight: 500;
+    transition: all 0.2s ease;
+}
+
+.chip:hover {
+    background-color: #D0D0D0;
+}
+
+.chip-primary {
+    background-color: var(--primary-light);
+    color: white;
+}
+
+.chip-success {
+    background-color: var(--success-color);
+    color: white;
+}
+
+.chip-warning {
+    background-color: var(--warning-color);
+    color: white;
+}
+
+.chip-error {
+    background-color: var(--error-color);
+    color: white;
+}
+
+.chip-info {
+    background-color: var(--info-color);
+    color: white;
+}
+
+/* ============================================
+   BUTTONS WITH RIPPLE EFFECT
+   ============================================ */
+
+.material-button {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 10px 24px;
+    min-width: 64px;
+    height: 36px;
+    border: none;
+    border-radius: 4px;
+    font-size: 14px;
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 1.25px;
+    cursor: pointer;
+    transition: all 0.3s cubic-bezier(0.4, 0.0, 0.2, 1);
+    overflow: hidden;
+    background-color: var(--primary-color);
+    color: white;
+}
+
+.material-button:hover {
+    box-shadow: 0 3px 6px rgba(0,0,0,0.16), 0 3px 6px rgba(0,0,0,0.23);
+    background-color: var(--primary-dark);
+}
+
+.material-button:active {
+    box-shadow: 0 10px 20px rgba(0,0,0,0.19), 0 6px 6px rgba(0,0,0,0.23);
+}
+
+.material-button-outlined {
+    background-color: transparent;
+    border: 1px solid var(--primary-color);
+    color: var(--primary-color);
+}
+
+.material-button-text {
+    background-color: transparent;
+    color: var(--primary-color);
+    box-shadow: none;
+}
+
+/* Ripple Effect */
+.material-button::after {
+    content: '';
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 0;
+    height: 0;
+    border-radius: 50%;
+    background: rgba(255, 255, 255, 0.5);
+    transform: translate(-50%, -50%);
+    transition: width 0.6s, height 0.6s;
+}
+
+.material-button:active::after {
+    width: 300px;
+    height: 300px;
+}
+
+/* ============================================
+   FLOATING ACTION BUTTON (FAB)
+   ============================================ */
+
+.fab {
+    position: fixed;
+    bottom: 24px;
+    right: 24px;
+    width: 56px;
+    height: 56px;
+    border-radius: 50%;
+    background-color: var(--accent-color);
+    color: white;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 24px;
+    cursor: pointer;
+    z-index: 1000;
+    transition: all 0.3s cubic-bezier(0.4, 0.0, 0.2, 1);
+    box-shadow: 0 6px 10px rgba(0,0,0,0.14), 0 1px 18px rgba(0,0,0,0.12), 0 3px 5px rgba(0,0,0,0.20);
+}
+
+.fab:hover {
+    box-shadow: 0 12px 20px rgba(0,0,0,0.20), 0 2px 28px rgba(0,0,0,0.17), 0 6px 10px rgba(0,0,0,0.25);
+    transform: scale(1.1);
+}
+
+.fab:active {
+    box-shadow: 0 19px 38px rgba(0,0,0,0.30), 0 15px 12px rgba(0,0,0,0.22);
+}
+
+.fab-mini {
+    width: 40px;
+    height: 40px;
+    font-size: 18px;
+}
+
+/* ============================================
+   BOTTOM SHEET
+   ============================================ */
+
+.bottom-sheet {
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    background: white;
+    border-radius: 16px 16px 0 0;
+    padding: 24px;
+    z-index: 999;
+    transform: translateY(100%);
+    transition: transform 0.3s cubic-bezier(0.4, 0.0, 0.2, 1);
+    box-shadow: 0 -8px 16px rgba(0,0,0,0.15);
+    max-height: 70vh;
+    overflow-y: auto;
+}
+
+.bottom-sheet.active {
+    transform: translateY(0);
+}
+
+.bottom-sheet-handle {
+    width: 40px;
+    height: 4px;
+    background: #BDBDBD;
+    border-radius: 2px;
+    margin: 0 auto 16px;
+}
+
+/* ============================================
+   PROGRESS BARS & INDICATORS
+   ============================================ */
+
+.progress-bar {
+    height: 4px;
+    background: #E0E0E0;
+    border-radius: 2px;
+    overflow: hidden;
+    position: relative;
+}
+
+.progress-bar-fill {
+    height: 100%;
+    background: var(--primary-color);
+    border-radius: 2px;
+    transition: width 0.4s cubic-bezier(0.4, 0.0, 0.2, 1);
+}
+
+.progress-bar-animated {
+    animation: progressAnimation 2s ease-in-out infinite;
+}
+
+@keyframes progressAnimation {
+    0% {
+        transform: translateX(-100%);
+    }
+    50% {
+        transform: translateX(0);
+    }
+    100% {
+        transform: translateX(100%);
+    }
+}
+
+/* Circular Progress */
+.circular-progress {
+    display: inline-block;
+    width: 40px;
+    height: 40px;
+    border: 4px solid rgba(0, 0, 0, 0.1);
+    border-top-color: var(--primary-color);
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+    to { transform: rotate(360deg); }
+}
+
+/* ============================================
+   FORM INPUTS
+   ============================================ */
+
+.material-input {
+    position: relative;
+    margin: 24px 0;
+}
+
+.material-input input,
+.material-input select {
+    width: 100%;
+    padding: 12px 0;
+    font-size: 16px;
+    color: var(--text-primary);
+    border: none;
+    border-bottom: 1px solid var(--divider-color);
+    outline: none;
+    background: transparent;
+    transition: border-color 0.3s;
+}
+
+.material-input input:focus,
+.material-input select:focus {
+    border-bottom-color: var(--primary-color);
+    border-bottom-width: 2px;
+}
+
+.material-input label {
+    position: absolute;
+    top: 12px;
+    left: 0;
+    font-size: 16px;
+    color: var(--text-secondary);
+    pointer-events: none;
+    transition: all 0.3s cubic-bezier(0.4, 0.0, 0.2, 1);
+}
+
+.material-input input:focus ~ label,
+.material-input input:not(:placeholder-shown) ~ label {
+    top: -8px;
+    font-size: 12px;
+    color: var(--primary-color);
+}
+
+/* ============================================
+   DIVIDERS
+   ============================================ */
+
+.divider {
+    height: 1px;
+    background: var(--divider-color);
+    margin: 16px 0;
+}
+
+.divider-thick {
+    height: 2px;
+}
+
+.divider-vertical {
+    width: 1px;
+    height: 100%;
+    display: inline-block;
+    margin: 0 16px;
+}
+
+/* ============================================
+   LISTS
+   ============================================ */
+
+.material-list {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+}
+
+.material-list-item {
+    padding: 16px;
+    border-bottom: 1px solid #F0F0F0;
+    transition: background-color 0.2s;
+    cursor: pointer;
+}
+
+.material-list-item:hover {
+    background-color: #F5F5F5;
+}
+
+.material-list-item:active {
+    background-color: #EEEEEE;
+}
+
+/* ============================================
+   AVATARS & ICONS
+   ============================================ */
+
+.avatar {
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    background-color: var(--primary-color);
+    color: white;
+    font-weight: 500;
+    font-size: 18px;
+}
+
+.avatar-small {
+    width: 32px;
+    height: 32px;
+    font-size: 14px;
+}
+
+.avatar-large {
+    width: 56px;
+    height: 56px;
+    font-size: 24px;
+}
+
+/* ============================================
+   TOOLTIPS
+   ============================================ */
+
+.tooltip {
+    position: relative;
+    display: inline-block;
+}
+
+.tooltip .tooltiptext {
+    visibility: hidden;
+    width: 120px;
+    background-color: #616161;
+    color: white;
+    text-align: center;
+    border-radius: 4px;
+    padding: 8px;
+    position: absolute;
+    z-index: 1;
+    bottom: 125%;
+    left: 50%;
+    margin-left: -60px;
+    opacity: 0;
+    transition: opacity 0.3s;
+    font-size: 12px;
+}
+
+.tooltip:hover .tooltiptext {
+    visibility: visible;
+    opacity: 0.95;
+}
+
+/* ============================================
+   SNACKBAR / TOAST
+   ============================================ */
+
+.snackbar {
+    position: fixed;
+    bottom: 24px;
+    left: 50%;
+    transform: translateX(-50%) translateY(100px);
+    background-color: #323232;
+    color: white;
+    padding: 14px 24px;
+    border-radius: 4px;
+    font-size: 14px;
+    z-index: 10000;
+    transition: transform 0.3s cubic-bezier(0.4, 0.0, 0.2, 1);
+}
+
+.snackbar.active {
+    transform: translateX(-50%) translateY(0);
+}
+
+/* ============================================
+   RESPONSIVE UTILITIES
+   ============================================ */
+
+@media (max-width: 768px) {
+    .material-card {
+        padding: 16px;
+        margin: 12px 0;
+    }
+    
+    .fab {
+        bottom: 16px;
+        right: 16px;
+    }
+    
+    .bottom-sheet {
+        max-height: 85vh;
+    }
+}
+
+/* ============================================
+   ANIMATIONS
+   ============================================ */
+
+@keyframes fadeIn {
+    from {
+        opacity: 0;
+        transform: translateY(20px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+.fade-in {
+    animation: fadeIn 0.5s ease-out;
+}
+
+@keyframes slideIn {
+    from {
+        transform: translateX(-100%);
+    }
+    to {
+        transform: translateX(0);
+    }
+}
+
+.slide-in {
+    animation: slideIn 0.3s cubic-bezier(0.4, 0.0, 0.2, 1);
+}
+
+/* ============================================
+   STREAMLIT SPECIFIC OVERRIDES
+   ============================================ */
+
+.stButton > button {
+    background-color: var(--primary-color);
+    color: white;
+    border-radius: 4px;
+    padding: 10px 24px;
+    border: none;
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 1.25px;
+    transition: all 0.3s cubic-bezier(0.4, 0.0, 0.2, 1);
+}
+
+.stButton > button:hover {
+    background-color: var(--primary-dark);
+    box-shadow: 0 3px 6px rgba(0,0,0,0.16), 0 3px 6px rgba(0,0,0,0.23);
+}
+
+.stSelectbox, .stMultiSelect {
+    border-bottom: 1px solid var(--divider-color);
+}
+
+.stSelectbox:focus-within, .stMultiSelect:focus-within {
+    border-bottom: 2px solid var(--primary-color);
+}
+
+/* Hide Streamlit branding */
+#MainMenu {visibility: hidden;}
+footer {visibility: hidden;}
+
+/* Smooth scrolling */
+html {
+    scroll-behavior: smooth;
+}
