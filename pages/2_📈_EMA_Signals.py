@@ -253,39 +253,40 @@ def render_breadth_summary(breadth: dict):
 def render_action_conclusion(buy_signals: list, sell_signals: list, strategy: str):
     """Render immediate action conclusion card."""
     
-    # Use container for better HTML rendering
-    st.markdown('<div class="material-card elevation-4" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 24px; border-radius: 12px;">', unsafe_allow_html=True)
-    st.markdown('<h2 style="margin: 0 0 16px 0; color: white;"><i class="fas fa-bullseye"></i> Immediate Action Plan</h2>', unsafe_allow_html=True)
+    # Build complete HTML in one string with minimal formatting
+    html_parts = []
+    html_parts.append('<div class="material-card elevation-4" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 24px; border-radius: 12px; margin-bottom: 24px;">')
+    html_parts.append('<h2 style="margin: 0 0 16px 0; color: white;"><i class="fas fa-bullseye"></i> Immediate Action Plan</h2>')
     
     # Buy signals
     if buy_signals:
-        st.markdown('<div style="background: rgba(255,255,255,0.1); padding: 16px; border-radius: 8px; margin-bottom: 16px;">', unsafe_allow_html=True)
-        st.markdown('<h3 style="margin: 0 0 12px 0; color: white;"><i class="fas fa-circle" style="color: #4CAF50;"></i> Top Buy Opportunities</h3>', unsafe_allow_html=True)
+        html_parts.append('<div style="background: rgba(255,255,255,0.1); padding: 16px; border-radius: 8px; margin-bottom: 16px;">')
+        html_parts.append('<h3 style="margin: 0 0 12px 0; color: white;"><i class="fas fa-circle" style="color: #4CAF50;"></i> Top Buy Opportunities</h3>')
         
         for signal in buy_signals:
             card = format_signal_card(signal, 'buy')
-            signal_html = f'<div style="background: rgba(255,255,255,0.15); padding: 12px; border-radius: 6px; margin-bottom: 8px;"><div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;"><span style="font-size: 18px; font-weight: bold;">{card["ticker"]}</span><span style="background: {card["priority_color"]}; padding: 4px 12px; border-radius: 12px; font-size: 12px; font-weight: bold;">{card["priority"]}</span></div><div style="font-size: 14px; opacity: 0.9; margin-bottom: 4px;">Price: {card["close"]:.2f} | Score: {card["score"]}</div><div style="font-size: 13px; opacity: 0.8;">{card["reason_text"]}</div></div>'
-            st.markdown(signal_html, unsafe_allow_html=True)
+            html_parts.append(f'<div style="background: rgba(255,255,255,0.15); padding: 12px; border-radius: 6px; margin-bottom: 8px;"><div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;"><span style="font-size: 18px; font-weight: bold; color: white;">{card["ticker"]}</span><span style="background: {card["priority_color"]}; color: white; padding: 4px 12px; border-radius: 12px; font-size: 12px; font-weight: bold;">{card["priority"]}</span></div><div style="font-size: 14px; color: rgba(255,255,255,0.9); margin-bottom: 4px;">Price: {card["close"]:.2f} | Score: {card["score"]}</div><div style="font-size: 13px; color: rgba(255,255,255,0.8);">{card["reason_text"]}</div></div>')
         
-        st.markdown('</div>', unsafe_allow_html=True)
+        html_parts.append('</div>')
     
     # Sell signals
     if sell_signals:
-        st.markdown('<div style="background: rgba(255,255,255,0.1); padding: 16px; border-radius: 8px; margin-bottom: 16px;">', unsafe_allow_html=True)
-        st.markdown('<h3 style="margin: 0 0 12px 0; color: white;"><i class="fas fa-circle" style="color: #F44336;"></i> Top Sell/Avoid Positions</h3>', unsafe_allow_html=True)
+        html_parts.append('<div style="background: rgba(255,255,255,0.1); padding: 16px; border-radius: 8px; margin-bottom: 16px;">')
+        html_parts.append('<h3 style="margin: 0 0 12px 0; color: white;"><i class="fas fa-circle" style="color: #F44336;"></i> Top Sell/Avoid Positions</h3>')
         
         for signal in sell_signals:
             card = format_signal_card(signal, 'sell')
-            signal_html = f'<div style="background: rgba(255,255,255,0.15); padding: 12px; border-radius: 6px; margin-bottom: 8px;"><div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;"><span style="font-size: 18px; font-weight: bold;">{card["ticker"]}</span><span style="background: {card["priority_color"]}; padding: 4px 12px; border-radius: 12px; font-size: 12px; font-weight: bold;">{card["priority"]}</span></div><div style="font-size: 14px; opacity: 0.9; margin-bottom: 4px;">Price: {card["close"]:.2f} | Score: {card["score"]}</div><div style="font-size: 13px; opacity: 0.8;">{card["reason_text"]}</div></div>'
-            st.markdown(signal_html, unsafe_allow_html=True)
+            html_parts.append(f'<div style="background: rgba(255,255,255,0.15); padding: 12px; border-radius: 6px; margin-bottom: 8px;"><div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;"><span style="font-size: 18px; font-weight: bold; color: white;">{card["ticker"]}</span><span style="background: {card["priority_color"]}; color: white; padding: 4px 12px; border-radius: 12px; font-size: 12px; font-weight: bold;">{card["priority"]}</span></div><div style="font-size: 14px; color: rgba(255,255,255,0.9); margin-bottom: 4px;">Price: {card["close"]:.2f} | Score: {card["score"]}</div><div style="font-size: 13px; color: rgba(255,255,255,0.8);">{card["reason_text"]}</div></div>')
         
-        st.markdown('</div>', unsafe_allow_html=True)
+        html_parts.append('</div>')
     
     # Strategy
-    strategy_html = f'<div style="background: rgba(255,255,255,0.2); padding: 16px; border-radius: 8px; border-left: 4px solid #FFD700;"><h4 style="margin: 0 0 8px 0; color: white;"><i class="fas fa-lightbulb"></i> Market Strategy</h4><p style="margin: 0; font-size: 16px; line-height: 1.6; color: white;">{strategy}</p></div>'
-    st.markdown(strategy_html, unsafe_allow_html=True)
+    html_parts.append(f'<div style="background: rgba(255,255,255,0.2); padding: 16px; border-radius: 8px; border-left: 4px solid #FFD700;"><h4 style="margin: 0 0 8px 0; color: white;"><i class="fas fa-lightbulb"></i> Market Strategy</h4><p style="margin: 0; font-size: 16px; line-height: 1.6; color: white;">{strategy}</p></div>')
+    html_parts.append('</div>')
     
-    st.markdown('</div>', unsafe_allow_html=True)
+    # Render as single HTML block
+    complete_html = ''.join(html_parts)
+    st.markdown(complete_html, unsafe_allow_html=True)
 
 def get_ema_position_summary(row: pd.Series) -> str:
     """Get compact EMA position summary."""
