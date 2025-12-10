@@ -345,19 +345,19 @@ def get_ema_position_summary(row: pd.Series) -> str:
     
     # If above all EMAs, show strongest position
     if len(above_emas) == len(ema_periods):
-        return '<i class="fas fa-check-circle" style="color: #4CAF50;"></i> >EMA10 (All EMAs)'
+        return '<i class="fas fa-check-circle" style="color: #4CAF50;"></i> &gt;EMA10 (All EMAs)'
     
     # If below all EMAs
     if len(below_emas) == len(ema_periods):
-        return '<i class="fas fa-times-circle" style="color: #F44336;"></i> <EMA200 (All EMAs)'
+        return '<i class="fas fa-times-circle" style="color: #F44336;"></i> &lt;EMA200 (All EMAs)'
     
     # Show highest EMA above and lowest EMA below
     if above_emas:
         highest_above = max(above_emas)
-        return f'<i class="fas fa-check-circle" style="color: #4CAF50;"></i> >EMA{highest_above}'
+        return f'<i class="fas fa-check-circle" style="color: #4CAF50;"></i> &gt;EMA{highest_above}'
     elif below_emas:
         lowest_below = min(below_emas)
-        return f'<i class="fas fa-times-circle" style="color: #F44336;"></i> <EMA{lowest_below}'
+        return f'<i class="fas fa-times-circle" style="color: #F44336;"></i> &lt;EMA{lowest_below}'
     
     return 'N/A'
 
