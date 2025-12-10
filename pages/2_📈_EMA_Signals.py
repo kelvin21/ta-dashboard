@@ -705,6 +705,8 @@ def detect_momentum_flag(row: pd.Series) -> tuple:
 
 def render_ticker_card(row: pd.Series, show_sparkline: bool = False):
     """Render compact vertical ticker card for 4-column grid layout."""
+    import html
+    
     ticker = row.get('ticker', 'N/A')
     close = row.get('close', 0)
     strength = row.get('ema_strength', 3)
@@ -713,7 +715,7 @@ def render_ticker_card(row: pd.Series, show_sparkline: bool = False):
     convergence = row.get('ema_convergence', 0)
     
     # Generate components
-    signal_comment = generate_signal_comment(row)
+    signal_comment = html.escape(generate_signal_comment(row)).replace('&bull;', '•')
     action_text, action_color = generate_action_recommendation(row)
     ema_dots = get_ema_dots(row)
     sr_level, sr_pct, is_support = get_nearest_support_resistance(row)
