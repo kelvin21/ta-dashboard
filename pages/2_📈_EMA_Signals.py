@@ -361,58 +361,208 @@ def get_ema_position_summary(row: pd.Series) -> str:
     
     return 'N/A'
 
+def generate_signal_comment(row: pd.Series) -> str:
+    """Generate signal comment based on EMA analysis."""
+    close = row.get('close', 0)
+    ema10 = row.get('ema10', 0)
+    ema20 = row.get('ema20', 0)
+    ema50 = row.get('ema50', 0)
+    ema100 = row.get('ema100', 0)
+    ema200 = row.get('ema200', 0)
+    alignment = row.get('ema_alignment', 'neutral')
+    zone = row.get('ema_zone', 'neutral')
+    
+    signals = []
+    
+    # Check for breakouts/breakdowns
+    if close > ema50 and ema50 > 0:
+        ema50_dist = ((close - ema50) / ema50) * 100
+        if ema50_dist < 2:
+            signals.append("Breaking above EMA50")
+        elif ema50_dist > 10:
+            signals.append("Strong above EMA50")
+    elif close < ema50 and ema50 > 0:
+        signals.append("Breakdown below EMA50")
+    
+    # Check for critical levels
+    if close < ema100 and ema100 > 0:
+        signals.append("Critical breakdown below EMA100")
+    
+    # Check for golden/death cross
+    if ema10 > ema20 > ema50 and alignment == 'bullish':
+        signals.append("Golden cross - bullish EMA alignment")
+    elif ema10 < ema20 < ema50 and alignment == 'bearish':
+        signals.append("Death cross - bearish EMA alignment")
+    
+    # Check zone-specific signals
+    if zone == 'buy':
+        signals.append("In BUY zone")
+    elif zone == 'accumulate':
+        signals.append("Accumulation phase")
+    elif zone == 'distribute':
+        signals.append("Distribution zone - caution")
+    elif zone == 'sell':
+        signals.append("In SELL zone")
+    elif zone == 'risk':
+        signals.append("High RISK zone")
+    
+    # Check convergence
+    convergence = row.get('ema_convergence', 0)
+    if convergence < 2:
+        signals.append("EMAs converging - breakout imminent")
+    
+    return " • ".join(signals) if signals else "No clear signals"
+
+def generate_action_recommendation(row: pd.Series) -> tuple:
+    """Generate action recommendation (text, color)."""
+    close = row.get('close', 0)
+    ema20 = row.get('ema20', 0)
+    ema50 = row.get('ema50', 0)
+    ema200 = row.get('ema200', 0)
+    zone = row.get('ema_zone', 'neutral')
+    alignment = row.get('ema_alignment', 'neutral')
+    strength = row.get('ema_strength', 3)
+    
+    # Strong buy signals
+    if zone == 'buy' and alignment == 'bullish' and strength >= 4:
+        return ("BUY NOW", "#4CAF50")
+    
+    # Wait for dip
+    if close > ema20 > ema50 and alignment == 'bullish':
+        ema20_dist = ((close - ema20) / ema20) * 100
+        if ema20_dist > 3:
+            return ("Wait for dip to EMA20", "#FF9800")
+        else:
+            return ("Buy near EMA20", "#8BC34A")
+    
+    # Accumulate zone
+    if zone == 'accumulate' and close > ema200:
+        return ("Accumulate on weakness", "#8BC34A")
+    
+    # Distribute zone
+    if zone == 'distribute':
+        return ("Reduce exposure", "#FF9800")
+    
+    # Sell zone
+    if zone == 'sell' or zone == 'risk':
+        return ("AVOID / EXIT", "#F44336")
+    
+    # Wait for clarity
+    if alignment == 'mixed':
+        return ("Wait for clear direction", "#9E9E9E")
+    
+    # Default
+    return ("HOLD / Monitor", "#2196F3")
+
+def get_ema_dots(row: pd.Series) -> str:
+    """Generate visual EMA position indicators (dots)."""
+    close = row.get('close', 0)
+    ema_periods = [10, 20, 50, 100, 200]
+    
+    dots = []
+    for period in ema_periods:
+        ema_val = row.get(f'ema{period}', np.nan)
+        if pd.notna(ema_val) and close > 0:
+            if close > ema_val:
+                # Green dot - price above EMA
+                dots.append(f'<i class="fas fa-circle" style="color: #4CAF50; font-size: 10px;"></i>')
+            else:
+                # Red dot - price below EMA
+                dots.append(f'<i class="fas fa-circle" style="color: #F44336; font-size: 10px;"></i>')
+        else:
+            # Gray dot - no data
+            dots.append(f'<i class="fas fa-circle" style="color: #BDBDBD; font-size: 10px;"></i>')
+    
+    return ' '.join(dots)
+
+def get_nearest_support_resistance(row: pd.Series) -> str:
+    """Get nearest EMA support or resistance."""
+    close = row.get('close', 0)
+    if close == 0:
+        return 'N/A'
+    
+    ema_periods = [10, 20, 50, 100, 200]
+    
+    # Find EMAs above and below price
+    supports = []  # EMAs below price
+    resistances = []  # EMAs above price
+    
+    for period in ema_periods:
+        ema_val = row.get(f'ema{period}', np.nan)
+        if pd.notna(ema_val):
+            if ema_val < close:
+                supports.append((period, ema_val))
+            else:
+                resistances.append((period, ema_val))
+    
+    # Get nearest
+    if supports:
+        nearest_support = max(supports, key=lambda x: x[1])  # Highest EMA below
+        return f'S: EMA{nearest_support[0]} ({nearest_support[1]:.2f})'
+    elif resistances:
+        nearest_resistance = min(resistances, key=lambda x: x[1])  # Lowest EMA above
+        return f'R: EMA{nearest_resistance[0]} ({nearest_resistance[1]:.2f})'
+    
+    return 'N/A'
+
 def render_ticker_card(row: pd.Series, show_sparkline: bool = False):
-    """Render individual ticker card."""
+    """Render compact single-row ticker card with 5 columns."""
     ticker = row.get('ticker', 'N/A')
     close = row.get('close', 0)
     strength = row.get('ema_strength', 3)
     zone = row.get('ema_zone', 'neutral')
-    alignment = row.get('ema_alignment', 'neutral')
-    convergence = row.get('ema_convergence', 0)
     
-    # Get compact EMA summary
-    ema_summary = get_ema_position_summary(row)
-    
-    # Get distances
-    ema20_dist = row.get('ema20_dist', 0)
-    ema50_dist = row.get('ema50_dist', 0)
-    
+    # Generate components
+    signal_comment = generate_signal_comment(row)
+    action_text, action_color = generate_action_recommendation(row)
+    ema_dots = get_ema_dots(row)
+    support_resistance = get_nearest_support_resistance(row)
     zone_color = get_zone_color(zone)
-    align_color = get_alignment_color(alignment)
     
-    col1, col2 = st.columns([3, 1])
-    
-    with col1:
-        st.markdown(f"""
-        <div class="material-card elevation-1" style="padding: 12px;">
-            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
-                <h3 style="margin: 0; color: #212121; font-size: 18px;">{ticker}</h3>
-                <div style="background: {zone_color}; color: white; padding: 3px 10px; border-radius: 10px; font-size: 11px; font-weight: bold;">
+    # Render single-row card
+    st.markdown(f"""
+    <div class="material-card elevation-1" style="padding: 10px 16px; margin-bottom: 8px;">
+        <div style="display: grid; grid-template-columns: 1fr 2fr 1.5fr 1fr 1fr; gap: 16px; align-items: center;">
+            
+            <!-- Column 1: Ticker & Price -->
+            <div>
+                <div style="font-size: 16px; font-weight: bold; color: #212121; margin-bottom: 2px;">{ticker}</div>
+                <div style="font-size: 20px; font-weight: bold; color: #2196F3;">{close:.2f}</div>
+                <div style="font-size: 10px; color: #757575; margin-top: 2px;">Strength: {strength}/5</div>
+            </div>
+            
+            <!-- Column 2: Signal Comment -->
+            <div style="font-size: 11px; color: #424242; line-height: 1.4;">
+                {signal_comment}
+            </div>
+            
+            <!-- Column 3: Action Recommendation -->
+            <div>
+                <div style="background: {action_color}; color: white; padding: 6px 12px; border-radius: 16px; text-align: center; font-size: 11px; font-weight: bold; margin-bottom: 4px;">
+                    {action_text}
+                </div>
+                <div style="font-size: 10px; color: #757575; text-align: center;">{support_resistance}</div>
+            </div>
+            
+            <!-- Column 4: EMA Indicators -->
+            <div style="text-align: center;">
+                <div style="font-size: 9px; color: #757575; margin-bottom: 4px;">EMA Position</div>
+                <div style="display: flex; gap: 4px; justify-content: center; margin-bottom: 2px;">
+                    {ema_dots}
+                </div>
+                <div style="font-size: 8px; color: #9E9E9E;">10 20 50 100 200</div>
+            </div>
+            
+            <!-- Column 5: Zone Badge -->
+            <div style="text-align: center;">
+                <div style="background: {zone_color}; color: white; padding: 8px 12px; border-radius: 12px; font-size: 11px; font-weight: bold;">
                     {zone.upper()}
                 </div>
             </div>
-            <div style="display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 8px;">
-                <span style="font-size: 22px; font-weight: bold; color: #212121;">{close:.2f}</span>
-                <span style="font-size: 13px; color: #757575;">{ema_summary}</span>
-            </div>
-            <div style="display: flex; gap: 6px; flex-wrap: wrap;">
-                <span class="chip chip-info" style="height: 24px; line-height: 24px; font-size: 11px; padding: 0 10px;"><i class="fas fa-star"></i> {strength}/5</span>
-                <span class="chip" style="background: {align_color}; color: white; height: 24px; line-height: 24px; font-size: 11px; padding: 0 10px;">{alignment}</span>
-                <span class="chip" style="height: 24px; line-height: 24px; font-size: 11px; padding: 0 10px;"><i class="fas fa-chart-bar"></i> {convergence:.1f}%</span>
-            </div>
+            
         </div>
-        """, unsafe_allow_html=True)
-    
-    with col2:
-        if show_sparkline:
-            # Load recent data for sparkline
-            end_date = datetime.now()
-            start_date = end_date - timedelta(days=60)
-            df_recent = load_price_data_for_ticker(ticker, start_date, end_date)
-            if not df_recent.empty:
-                df_recent = calculate_all_indicators(df_recent)
-                fig = create_mini_sparkline(df_recent, ticker)
-                st.plotly_chart(fig, use_container_width=True, key=f"spark_{ticker}")
+    </div>
+    """, unsafe_allow_html=True)
 
 # =====================================================================
 # MAIN PAGE
@@ -561,20 +711,12 @@ st.markdown(f"""
 st.markdown("### <i class='fas fa-trophy'></i> Top Ranked Opportunities", unsafe_allow_html=True)
 
 if not df_ranked.empty:
-    # Display in grid
-    num_cols = 2 if not show_sparklines else 1
-    rows = []
-    for i in range(0, len(df_ranked), num_cols):
-        rows.append(df_ranked.iloc[i:i+num_cols])
-    
-    for row_df in rows:
-        cols = st.columns(num_cols)
-        for idx, (_, ticker_row) in enumerate(row_df.iterrows()):
-            with cols[idx]:
-                render_ticker_card(
-                    df_indicators[df_indicators['ticker'] == ticker_row['ticker']].iloc[0],
-                    show_sparkline=show_sparklines
-                )
+    # Display cards in single column for full-width compact layout
+    for _, ticker_row in df_ranked.iterrows():
+        render_ticker_card(
+            df_indicators[df_indicators['ticker'] == ticker_row['ticker']].iloc[0],
+            show_sparkline=show_sparklines
+        )
 else:
     st.info("No tickers match the selected filters")
 
