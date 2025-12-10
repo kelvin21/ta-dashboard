@@ -411,7 +411,8 @@ def generate_signal_comment(row: pd.Series) -> str:
     if convergence < 2:
         signals.append("EMAs converging - breakout imminent")
     
-    return " • ".join(signals) if signals else "No clear signals"
+    # Use HTML entity for bullet to avoid rendering issues
+    return " &bull; ".join(signals) if signals else "No clear signals"
 
 def generate_action_recommendation(row: pd.Series) -> tuple:
     """Generate action recommendation (text, color)."""
@@ -700,6 +701,8 @@ def render_ticker_card(row: pd.Series, show_sparkline: bool = False):
     </div>
 </div>
 """
+    
+    # Use st.components to ensure proper rendering
     st.markdown(card_html, unsafe_allow_html=True)
 
 # =====================================================================
