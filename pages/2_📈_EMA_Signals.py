@@ -661,8 +661,7 @@ def render_ticker_card(row: pd.Series, show_sparkline: bool = False):
         violation_badge = '<div style="font-size: 8px; color: #9E9E9E; margin-top: 2px;">No recent violations</div>'
     
     # Render compact vertical card
-    card_html = f"""
-<div class="material-card elevation-1" style="padding: 12px; margin-bottom: 12px; height: 100%; display: flex; flex-direction: column;">
+    card_html = f"""<div class="material-card elevation-1" style="padding: 12px; margin-bottom: 12px; height: 100%; display: flex; flex-direction: column;">
     <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 8px;">
         <div style="display: flex; align-items: center; gap: 6px;">
             <div style="font-size: 16px; font-weight: bold; color: #212121;">{ticker}</div>
@@ -699,10 +698,8 @@ def render_ticker_card(row: pd.Series, show_sparkline: bool = False):
     <div style="font-size: 9px; color: #616161; line-height: 1.3; padding: 6px; background: #FAFAFA; border-radius: 4px; flex-grow: 1; border-left: 2px solid {zone_color};">
         {signal_comment}
     </div>
-</div>
-"""
+</div>"""
     
-    # Use st.components to ensure proper rendering
     st.markdown(card_html, unsafe_allow_html=True)
 
 # =====================================================================
