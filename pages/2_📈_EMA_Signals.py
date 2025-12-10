@@ -26,6 +26,46 @@ if css_path.exists():
 # Load FontAwesome
 st.markdown('<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/all.min.css">', unsafe_allow_html=True)
 
+# Add tooltip CSS
+st.markdown("""
+<style>
+[title] {
+    position: relative;
+    cursor: help;
+}
+[title]:hover::after {
+    content: attr(title);
+    position: absolute;
+    bottom: 100%;
+    left: 50%;
+    transform: translateX(-50%);
+    padding: 8px 12px;
+    background: rgba(33, 33, 33, 0.95);
+    color: white;
+    border-radius: 6px;
+    font-size: 11px;
+    white-space: normal;
+    max-width: 250px;
+    width: max-content;
+    z-index: 1000;
+    box-shadow: 0 4px 8px rgba(0,0,0,0.2);
+    margin-bottom: 5px;
+    line-height: 1.4;
+}
+[title]:hover::before {
+    content: '';
+    position: absolute;
+    bottom: 100%;
+    left: 50%;
+    transform: translateX(-50%);
+    border: 5px solid transparent;
+    border-top-color: rgba(33, 33, 33, 0.95);
+    margin-bottom: -5px;
+    z-index: 1000;
+}
+</style>
+""", unsafe_allow_html=True)
+
 # Load environment
 try:
     from dotenv import load_dotenv
@@ -578,6 +618,85 @@ def detect_ema_retest(row: pd.Series, ticker: str, lookback_days: int = 30) -> t
     except (ValueError, KeyError):
         return (False, 0, sr_level)
 
+def detect_momentum_flag(row: pd.Series) -> tuple:
+    """
+    Detect momentum stage and return (flag_type, icon, color, tooltip).
+    
+    Flags:
+    1. Strong Momentum (Green) - Ride the trend
+    2. Early Peak Warning (Orange) - Potential topping zone
+    3. Profit-Taking Pressure (Red) - Weakening momentum
+    4. Exit Trigger (Dark Gray) - Momentum breakdown
+    """
+    close = row.get('close', np.nan)
+    ema10 = row.get('ema10', np.nan)
+    ema20 = row.get('ema20', np.nan)
+    ema50 = row.get('ema50', np.nan)
+    rsi = row.get('rsi', 50)
+    macd_hist = row.get('macd_histogram', 0)
+    macd_stage = row.get('macd_stage', 'neutral')
+    
+    # Check for missing data
+    if any(pd.isna(v) for v in [close, ema10, ema20, ema50]):
+        return ('none', '', '', '')
+    
+    # Calculate distance from EMA20
+    ema20_distance_pct = ((close - ema20) / ema20) * 100
+    
+    # 4️⃣ Exit Trigger (Momentum Breakdown) - HIGHEST PRIORITY
+    if (close < ema20 and 
+        ema10 < ema20 and 
+        macd_stage in ['declining', 'confirmed_peak'] and 
+        rsi < 50):
+        return (
+            'exit',
+            '<i class="fas fa-skull-crossbones"></i>',
+            '#424242',
+            'Exit Zone: Price below EMA20, EMA10 crossed below EMA20, MACD declining, RSI &lt; 50'
+        )
+    
+    # 3️⃣ Profit-Taking Pressure Detected
+    if (close < ema10 and 
+        close > ema20 and 
+        macd_hist < 0 and 
+        rsi < 60):
+        return (
+            'profit_taking',
+            '<i class="fas fa-exclamation-circle"></i>',
+            '#F44336',
+            'Profit-Taking Pressure: Price below EMA10, MACD histogram declining, RSI dropped from high'
+        )
+    
+    # 2️⃣ Early Peak Warning (Potential Topping Zone)
+    if (close > ema10 and 
+        close > ema20 and 
+        rsi > 70 and 
+        macd_stage == 'peaking' and 
+        ema20_distance_pct > 10):
+        return (
+            'peak_warning',
+            '<i class="fas fa-exclamation-triangle"></i>',
+            '#FF9800',
+            f'Early Peak Warning: RSI &gt; 70, MACD peaking, price +{ema20_distance_pct:.1f}% above EMA20'
+        )
+    
+    # 1️⃣ Strong Momentum (Ride the Trend)
+    if (close > ema10 and 
+        close > ema20 and 
+        ema10 > ema20 and 
+        ema20 > ema50 and 
+        rsi > 60 and 
+        macd_hist > 0):
+        return (
+            'strong_momentum',
+            '<i class="fas fa-rocket"></i>',
+            '#4CAF50',
+            f'Strong Momentum: Price &gt; EMA10/20, aligned EMAs, RSI {rsi:.0f}, MACD rising'
+        )
+    
+    # No flag
+    return ('none', '', '', '')
+
 def render_ticker_card(row: pd.Series, show_sparkline: bool = False):
     """Render compact vertical ticker card for 4-column grid layout."""
     ticker = row.get('ticker', 'N/A')
@@ -597,6 +716,7 @@ def render_ticker_card(row: pd.Series, show_sparkline: bool = False):
     has_retest, retest_count, retest_ema = detect_ema_retest(row, ticker)
     conv_icon, conv_color, conv_status = get_convergence_rating_icon(convergence)
     has_violation, days_ago, violation_type, violation_ema = detect_ema_violation(row, ticker)
+    momentum_type, momentum_icon, momentum_color, momentum_tooltip = detect_momentum_flag(row)
     
     # Format support/resistance display
     sr_type = 'S' if is_support else 'R'
@@ -624,12 +744,21 @@ def render_ticker_card(row: pd.Series, show_sparkline: bool = False):
     else:
         violation_badge = '<div style="font-size: 8px; color: #9E9E9E; margin-top: 2px;">No recent violations</div>'
     
+    # Format momentum flag badge
+    if momentum_type != 'none':
+        momentum_badge = f'<div style="background: {momentum_color}; color: white; padding: 4px 8px; border-radius: 6px; font-size: 11px; display: inline-flex; align-items: center; gap: 4px; margin-top: 4px;" title="{momentum_tooltip}">{momentum_icon} <span style="font-weight: 600;">{momentum_type.replace("_", " ").title()}</span></div>'
+    else:
+        momentum_badge = ''
+    
     # Render compact vertical card
     card_html = f"""<div class="material-card elevation-1" style="padding: 12px; margin-bottom: 12px; height: 100%; display: flex; flex-direction: column;">
     <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 8px;">
-        <div style="display: flex; align-items: center; gap: 6px;">
-            <div style="font-size: 16px; font-weight: bold; color: #212121;">{ticker}</div>
-            {alignment_icon}
+        <div style="display: flex; flex-direction: column; gap: 2px;">
+            <div style="display: flex; align-items: center; gap: 6px;">
+                <div style="font-size: 16px; font-weight: bold; color: #212121;">{ticker}</div>
+                {alignment_icon}
+            </div>
+            {momentum_badge}
         </div>
         <div style="display: flex; flex-direction: column; align-items: flex-end; gap: 4px;">
             <div style="background: {zone_color}; color: white; padding: 4px 8px; border-radius: 8px; font-size: 9px; font-weight: bold;">
