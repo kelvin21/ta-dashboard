@@ -102,6 +102,31 @@ def categorize_macd_stage(stage: str) -> str:
         return "N/A"
 
 
+def categorize_macd_stage_vectorized(stage_series: pd.Series) -> pd.Series:
+    """
+    Vectorized version: Categorize MACD stages into simplified buckets.
+    
+    Args:
+        stage_series: Series of stage strings from detect_macd_stage
+    
+    Returns:
+        Series of categories: 'troughing', 'confirmed_trough', 'rising', 'peaking', 'confirmed_peak', 'declining', or 'N/A'
+    """
+    # Create mapping dictionary
+    mapping = {
+        '1. Troughing': 'troughing',
+        '2. Confirmed Trough': 'confirmed_trough',
+        '3. Rising above Zero': 'rising',
+        '4. Peaking': 'peaking',
+        '5. Confirmed Peak': 'confirmed_peak',
+        '6. Falling below Zero': 'declining',
+        'N/A': 'N/A'
+    }
+    
+    # Use vectorized map operation
+    return stage_series.map(mapping).fillna('N/A')
+
+
 def macd_stage_score(stage: str) -> int:
     """
     Convert MACD stage to numeric score for sorting/comparison.

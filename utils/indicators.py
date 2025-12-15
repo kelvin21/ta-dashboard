@@ -323,6 +323,29 @@ def categorize_rsi(rsi_value: float) -> str:
         return 'overbought'
 
 
+def categorize_rsi_vectorized(rsi_series: pd.Series) -> pd.Series:
+    """
+    Vectorized version: Categorize RSI values into buckets.
+    
+    Args:
+        rsi_series: Series of RSI values
+    
+    Returns:
+        Series of string categories: 'oversold', '<50', '>50', 'overbought', or 'N/A'
+    """
+    conditions = [
+        rsi_series.isna(),
+        rsi_series < 30,
+        rsi_series < 50,
+        rsi_series <= 70
+    ]
+    choices = ['N/A', 'oversold', '<50', '>50']
+    return pd.Series(
+        np.select(conditions, choices, default='overbought'),
+        index=rsi_series.index
+    )
+
+
 def check_price_above_ema(close: float, ema: float) -> bool:
     """
     Check if price is above EMA.
@@ -337,3 +360,19 @@ def check_price_above_ema(close: float, ema: float) -> bool:
     if pd.isna(close) or pd.isna(ema):
         return False
     return close > ema
+
+
+def check_price_above_ema_vectorized(close_series: pd.Series, ema_series: pd.Series) -> pd.Series:
+    """
+    Vectorized version: Check if prices are above EMA.
+    
+    Args:
+        close_series: Series of closing prices
+        ema_series: Series of EMA values
+    
+    Returns:
+        Boolean series indicating if close > ema (False for NaN values)
+    """
+    # Handle NaN values - return False where either is NaN
+    valid_mask = close_series.notna() & ema_series.notna()
+    return (close_series > ema_series) & valid_mask

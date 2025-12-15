@@ -501,8 +501,8 @@ def _overview_row(t, df, lookback, debug):
         "MACD_Hist_Daily": f"{histD_val:.2f}" if not np.isnan(histD_val) else "",
         "MACD_Hist_Weekly": f"{histW_val:.2f}" if not np.isnan(histW_val) else "",
         "MACD_Hist_Monthly": f"{histM_val:.2f}" if not np.isnan(histM_val) else "",
-        "MACD_Slope_3d": f"{macd_slope_3d:.4f}" if not np.isnan(macd_slope_3d) else "",
-        "MACD_Slope_Peak": f"{macd_slope_from_peak:.4f}" if not np.isnan(macd_slope_from_peak) else "",
+        "MACD_Slope_3d": f"{macd_slope_3d:.2f}" if not np.isnan(macd_slope_3d) else "",
+        "MACD_Slope_Peak": f"{macd_slope_from_peak:.2f}" if not np.isnan(macd_slope_from_peak) else "",
         "Vol/AvgVol": f"{vol_ratio:.1f}x",
         "Signal": signal_note
     }
@@ -871,12 +871,12 @@ if sidebar.button("Clear cache & reload"):
 all_tickers = get_all_tickers(debug=debug)
 
 # New: Load include/exclude tickers from database
-if HAS_DB_ADAPTER:
-    include_tickers_db = db.get_setting("include_tickers")
-    exclude_tickers_db = db.get_setting("exclude_tickers")
-else:
+if  not HAS_DB_ADAPTER:
     include_tickers_db = ""
     exclude_tickers_db = ""
+else:
+    include_tickers_db = db.get_setting("include_tickers")
+    exclude_tickers_db = db.get_setting("exclude_tickers")
 
 # New: Add text boxes for filtering tickers
 include_tickers_input = sidebar.text_area(

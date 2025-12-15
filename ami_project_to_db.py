@@ -50,27 +50,66 @@ EXPORT_DIR = r"C:\Program Files (x86)\AmiBroker\Export"
 DEFAULT_PROJECT = "ExportData.apx"
 
 # Optional hardcoded URI (only used if MONGODB_URI env not set)
-HARDCODED_MONGODB_URI = ""
+HARDCODED_MONGODB_URI = "mongodb+srv://longhalucky2111_db_user:abc123abc@cluster0.g4ndhy9.mongodb.net/?appName=Cluster0"
 
 # Prefer env, then hardcoded, then localhost
-DEFAULT_MONGO_URI = os.getenv("MONGODB_URI") or HARDCODED_MONGODB_URI or "mongodb://localhost:27017"
+DEFAULT_MONGO_URI = os.getenv("MONGODB_URI") or HARDCODED_MONGODB_URI or "mongodb+srv://longhalucky2111_db_user:abc123abc@cluster0.g4ndhy9.mongodb.net/?appName=Cluster0"
 DEFAULT_DB = os.getenv("MONGODB_DB_NAME", "macd_reversal")
-DEFAULT_COLLECTION = os.getenv("MONGODB_OHLCV_COLLECTION", "ohlcv")
+DEFAULT_COLLECTION = os.getenv("MONGODB_OHLCV_COLLECTION", "price_data")
 
 
 class AmiProjectToMongo:
-    """Handle AmiBroker export and loading into MongoDB."""
+    """Handle AmiBroker export and loading into MongoDB.
 
-    def __init__(self, mongo_uri=DEFAULT_MONGO_URI, db_name=DEFAULT_DB, collection=DEFAULT_COLLECTION):
+    When possible this reuses the same MongoDB connection/collection as `db_adapter.DatabaseAdapter`
+    so data is compatible with the rest of the app (i.e. writes into `price_data`).
+    """
+
+    def __init__(self, mongo_uri=DEFAULT_MONGO_URI, db_name=DEFAULT_DB, collection=DEFAULT_COLLECTION, debug: bool = False):
         self.mongo_uri = mongo_uri
-        self.client = pymongo.MongoClient(mongo_uri)
-        self.db = self.client[db_name]
-        self.collection = self.db[collection]
+        self._using_db_adapter = False
+        self.debug = debug
+
+        # Try to reuse db_adapter so we share the same `price_data` collection & indexes
+        try:
+            from db_adapter import get_db_adapter  # type: ignore
+
+            db_adapt = get_db_adapter()
+            if getattr(db_adapt, "db_type", None) == "mongodb" and hasattr(db_adapt, "price_data"):
+                # Use the adapter's collection (normally named 'price_data')
+                self.client = db_adapt.client  # type: ignore[attr-defined]
+                self.db = db_adapt.db          # type: ignore[attr-defined]
+                self.collection = db_adapt.price_data
+                self._using_db_adapter = True
+                if self.debug:
+                    print("🔌 Debug: Using shared Mongo client from db_adapter (collection='price_data').")
+            else:
+                raise RuntimeError("db_adapter not in MongoDB mode")
+        except Exception:
+            # Fall back to direct pymongo client if db_adapter is unavailable
+            self.client = pymongo.MongoClient(mongo_uri)
+            self.db = self.client[db_name]
+            self.collection = self.db[collection]
+            if self.debug:
+                print(f"🔌 Debug: Created standalone MongoClient to '{mongo_uri}', "
+                      f"db='{db_name}', collection='{collection}'.")
+
         os.makedirs(DATA_DIR, exist_ok=True)
         self.ensure_indexes()
 
     def ensure_indexes(self):
-        """Ensure indexes for fast upsert by project/ticker/date."""
+        """Ensure indexes for fast upsert.
+
+        If we're using the shared `price_data` collection from db_adapter, rely on
+        its index creation (unique_ticker_date, ticker_date_source) and skip our own.
+        """
+        try:
+            if self.collection.name == "price_data":
+                return
+        except Exception:
+            return
+
+        # For standalone collections (not shared with db_adapter) create our own indexes
         self.collection.create_index(
             [("project", pymongo.ASCENDING), ("ticker", pymongo.ASCENDING), ("date", pymongo.ASCENDING)],
             unique=True,
@@ -155,10 +194,11 @@ class AmiProjectToMongo:
         """Run AmiBroker analysis and export results to CSV via OLE."""
         try:
             ab = win32com.client.Dispatch("Broker.Application")
+            ab.visible = True
         except Exception as e:
             print(f"Error connecting to AmiBroker: {e}")
             raise
-
+            
         temp_dir = tempfile.gettempdir()
         base_name = os.path.splitext(os.path.basename(project_path))[0]
         date_str = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -199,6 +239,11 @@ class AmiProjectToMongo:
                 analysis.Close()
             except Exception:
                 pass
+            
+            if self.debug:
+                print(f"\n🔍 Debug: Temporary APX file location: {temp_apx}")
+                input("Press Enter to delete the temp file and continue...")
+            
             try:
                 os.remove(temp_apx)
             except Exception:
@@ -211,6 +256,8 @@ class AmiProjectToMongo:
             return 0
 
         try:
+            if self.debug:
+                print("🔎 Debug step 1/6: Reading CSV export.")
             print(f"📊 Loading CSV file: {export_path}")
             file_size = os.path.getsize(export_path)
             print(f"📁 File size: {file_size / (1024 * 1024):.1f} MB")
@@ -224,6 +271,8 @@ class AmiProjectToMongo:
                 print("❌ CSV file is empty")
                 return 0
 
+            if self.debug:
+                print("🔎 Debug step 2/6: Normalizing column names.")
             df.columns = [col.lower().strip().replace("/", "_").replace(" ", "_") for col in df.columns]
 
             column_mapping = {
@@ -256,10 +305,22 @@ class AmiProjectToMongo:
                 return 0
 
             if "date" in df.columns:
-                df["date"] = pd.to_datetime(df["date"], errors="coerce")
+                if self.debug:
+                    print(f"🔎 Debug: Sample raw dates before parsing: {df['date'].head(10).tolist()}")
+                
+                # Parse dates with dayfirst=True to handle DD/MM/YYYY format from AmiBroker
+                df["date"] = pd.to_datetime(df["date"], errors="coerce", dayfirst=True)
                 invalid_dates = df["date"].isna().sum()
+                
                 if invalid_dates > 0:
                     print(f"⚠️ Found {invalid_dates} invalid dates")
+                    if self.debug:
+                        # Show which rows have invalid dates
+                        invalid_rows = df[df["date"].isna()]
+                        if len(invalid_rows) > 0:
+                            print(f"🔎 Debug: First 5 rows with invalid dates:")
+                            for idx, row in invalid_rows.head(5).iterrows():
+                                print(f"   Row {idx}: ticker={row.get('ticker')}, date={row.get('date')}")
             else:
                 print("❌ No date column found")
                 return 0
@@ -270,12 +331,26 @@ class AmiProjectToMongo:
             if "open_interest" not in df.columns:
                 df["open_interest"] = 0
 
+            if self.debug:
+                print("🔎 Debug step 3/6: Cleaning ticker/date and optional columns.")
+                print(f"🔎 Debug: Rows before dropna: {len(df)}")
+            
             df = df.dropna(subset=["ticker", "date"])
+            
+            if self.debug:
+                print(f"🔎 Debug: Rows after dropna: {len(df)}")
+            
             df = df[df["ticker"].astype(str).str.strip() != ""]
 
             if ticker_filter:
+                if self.debug:
+                    print(f"🔎 Debug: Unique tickers before filter: {sorted(df['ticker'].str.upper().unique().tolist())}")
+                
                 df = df[df["ticker"].str.upper().isin(ticker_filter)]
                 print(f"Filtered to tickers {sorted(ticker_filter)}, remaining rows: {len(df)}")
+                
+                if self.debug and len(df) > 0:
+                    print(f"🔎 Debug: Date range in filtered data: {df['date'].min()} to {df['date'].max()}")
 
             cleaned_count = len(df)
             if cleaned_count == 0:
@@ -290,31 +365,47 @@ class AmiProjectToMongo:
                     f"L:{row.get('low', 'N/A')} C:{row.get('close', 'N/A')} V:{row.get('volume', 'N/A')}"
                 )
 
+            if self.debug:
+                print("🔎 Debug step 4/6: Preparing MongoDB bulk operations.")
             operations = []
             for idx, row in df.iterrows():
                 ticker = str(row["ticker"]).strip().upper()
                 doc_date = pd.to_datetime(row["date"]).to_pydatetime()
+                # If writing into shared `price_data`, use the same schema/keys as db_adapter
+                if self.collection.name == "price_data":
+                    update_filter = {"ticker": ticker, "date": doc_date}
+                    update_doc = {
+                        "$set": {
+                            "ticker": ticker,
+                            "date": doc_date,
+                            "open": float(row["open"]) if pd.notna(row["open"]) else None,
+                            "high": float(row["high"]) if pd.notna(row["high"]) else None,
+                            "low": float(row["low"]) if pd.notna(row["low"]) else None,
+                            "close": float(row["close"]) if pd.notna(row["close"]) else None,
+                            "volume": int(row["volume"]) if pd.notna(row["volume"]) else 0,
+                            "source": "amibroker",
+                            "created_at": datetime.utcnow(),
+                        }
+                    }
+                else:
+                    # Standalone collection keeps project/open_interest/exported_at fields
+                    update_filter = {"project": project_name, "ticker": ticker, "date": doc_date}
+                    update_doc = {
+                        "$set": {
+                            "project": project_name,
+                            "ticker": ticker,
+                            "date": doc_date,
+                            "open": float(row["open"]) if pd.notna(row["open"]) else None,
+                            "high": float(row["high"]) if pd.notna(row["high"]) else None,
+                            "low": float(row["low"]) if pd.notna(row["low"]) else None,
+                            "close": float(row["close"]) if pd.notna(row["close"]) else None,
+                            "volume": int(row["volume"]) if pd.notna(row["volume"]) else 0,
+                            "open_interest": int(row["open_interest"]) if pd.notna(row["open_interest"]) else 0,
+                            "exported_at": datetime.utcnow(),
+                        }
+                    }
 
-                operations.append(
-                    pymongo.UpdateOne(
-                        {"project": project_name, "ticker": ticker, "date": doc_date},
-                        {
-                            "$set": {
-                                "project": project_name,
-                                "ticker": ticker,
-                                "date": doc_date,
-                                "open": float(row["open"]) if pd.notna(row["open"]) else None,
-                                "high": float(row["high"]) if pd.notna(row["high"]) else None,
-                                "low": float(row["low"]) if pd.notna(row["low"]) else None,
-                                "close": float(row["close"]) if pd.notna(row["close"]) else None,
-                                "volume": int(row["volume"]) if pd.notna(row["volume"]) else 0,
-                                "open_interest": int(row["open_interest"]) if pd.notna(row["open_interest"]) else 0,
-                                "exported_at": datetime.utcnow(),
-                            }
-                        },
-                        upsert=True,
-                    )
-                )
+                operations.append(pymongo.UpdateOne(update_filter, update_doc, upsert=True))
 
                 if (idx + 1) % 1000 == 0:
                     print(f"  📦 Prepared {idx + 1}/{len(df)} docs")
@@ -323,10 +414,49 @@ class AmiProjectToMongo:
                 print("❌ No operations to send")
                 return 0
 
+            if self.debug:
+                print(f"🔎 Debug step 5/6: Bulk writing {len(operations)} operations to MongoDB.")
             print(f"🚀 Writing {len(operations)} records to MongoDB...")
             result = self.collection.bulk_write(operations, ordered=False)
             inserted = result.upserted_count + result.modified_count
             print(f"🎉 MongoDB write complete: {inserted} upserted/updated")
+
+            # Optional verification: read back a small sample from MongoDB
+            if self.debug and inserted > 0:
+                try:
+                    min_date = pd.to_datetime(df["date"].min()).to_pydatetime()
+                    max_date = pd.to_datetime(df["date"].max()).to_pydatetime()
+                    confirm_filter = {"date": {"$gte": min_date, "$lte": max_date}}
+                    if ticker_filter:
+                        confirm_filter["ticker"] = {"$in": sorted(ticker_filter)}
+                    if self.collection.name != "price_data":
+                        confirm_filter["project"] = project_name
+
+                    count = self.collection.count_documents(confirm_filter)
+                    print(f"🔎 Debug step 6/6: Verification query filter = {confirm_filter}")
+                    print(f"🔎 Debug: MongoDB now has {count} documents matching this import range.")
+
+                    sample_docs = list(self.collection.find(confirm_filter).limit(3))
+                    if sample_docs:
+                        print("🔎 Debug sample documents from MongoDB:")
+                        for i, doc in enumerate(sample_docs, start=1):
+                            # Avoid dumping huge docs; show key fields only
+                            brief = {
+                                "ticker": doc.get("ticker"),
+                                "date": doc.get("date"),
+                                "open": doc.get("open"),
+                                "high": doc.get("high"),
+                                "low": doc.get("low"),
+                                "close": doc.get("close"),
+                                "volume": doc.get("volume"),
+                                "source": doc.get("source"),
+                                "project": doc.get("project"),
+                            }
+                            print(f"   Doc {i}: {brief}")
+                    else:
+                        print("🔎 Debug: No documents returned by verification query (check filters).")
+                except Exception as ver_e:
+                    print(f"⚠️ Debug verification failed: {ver_e}")
 
             try:
                 os.remove(export_path)
@@ -380,6 +510,7 @@ def main():
     parser.add_argument("--all", dest="all_tickers", action="store_true", help="Use all tickers (*)")
     parser.add_argument("--no-run", action="store_true", help="Skip AmiBroker run, only parse latest export file")
     parser.add_argument("--export-file", type=str, help="Use an existing CSV export instead of running AmiBroker")
+    parser.add_argument("--debug", action="store_true", help="Enable verbose debug output and MongoDB verification")
 
     args = parser.parse_args()
 
@@ -397,7 +528,7 @@ def main():
     elif args.all_tickers:
         symbol_string = "*"
 
-    loader = AmiProjectToMongo(args.mongo_uri, args.mongo_db, args.collection)
+    loader = AmiProjectToMongo(args.mongo_uri, args.mongo_db, args.collection, debug=args.debug)
 
     try:
         project_name = args.project

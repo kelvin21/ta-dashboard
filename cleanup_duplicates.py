@@ -178,6 +178,7 @@ if __name__ == "__main__":
         print("MongoDB URI not set in environment. Skipping MongoDB cleanup.")
     db_path = os.getenv("PRICE_DB_PATH", "price_data.db")
     if os.path.exists(db_path):
+        
         cleanup_sqlite_remove_nan_id_updated(db_path)
     else:
         print(f"SQLite DB not found at {db_path}")

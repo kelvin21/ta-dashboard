@@ -31,11 +31,13 @@ except ImportError:
 try:
     from utils.indicators import (
         calculate_all_indicators, categorize_rsi, check_price_above_ema,
-        calculate_ema, calculate_rsi, calculate_macd, calculate_bollinger_bands
+        calculate_ema, calculate_rsi, calculate_macd, calculate_bollinger_bands,
+        categorize_rsi_vectorized, check_price_above_ema_vectorized
     )
     from utils.macd_stage import (
         detect_macd_stage, categorize_macd_stage, get_all_macd_stages,
-        get_macd_stage_color, get_macd_stage_display_name
+        get_macd_stage_color, get_macd_stage_display_name,
+        categorize_macd_stage_vectorized
     )
     from utils.db_async import get_sync_db_adapter
     USE_UTILS = True
@@ -514,16 +516,18 @@ def calculate_market_breadth(df_indicators: pd.DataFrame) -> dict:
     for period in [10, 20, 50, 100, 200]:
         col = f'ema{period}'
         if col in df_indicators.columns:
-            above = df_indicators.apply(
-                lambda row: check_price_above_ema(row.get('close', np.nan), row.get(col, np.nan)),
-                axis=1
+            # Vectorized: much faster than apply
+            above = check_price_above_ema_vectorized(
+                df_indicators['close'],
+                df_indicators[col]
             ).sum()
             breadth[f'above_ema{period}'] = above
             breadth[f'above_ema{period}_pct'] = (above / total_tickers * 100) if total_tickers > 0 else 0
     
     # RSI breadth
     if 'rsi' in df_indicators.columns:
-        df_indicators['rsi_category'] = df_indicators['rsi'].apply(categorize_rsi)
+        # Vectorized: much faster than apply
+        df_indicators['rsi_category'] = categorize_rsi_vectorized(df_indicators['rsi'])
         
         # Count valid RSI values (exclude N/A)
         rsi_valid_count = (df_indicators['rsi_category'] != 'N/A').sum()
@@ -539,7 +543,8 @@ def calculate_market_breadth(df_indicators: pd.DataFrame) -> dict:
     
     # MACD breadth
     if 'macd_stage' in df_indicators.columns:
-        df_indicators['macd_category'] = df_indicators['macd_stage'].apply(categorize_macd_stage)
+        # Vectorized: much faster than apply
+        df_indicators['macd_category'] = categorize_macd_stage_vectorized(df_indicators['macd_stage'])
         
         # Count valid MACD values (exclude N/A)
         macd_valid_count = (df_indicators['macd_category'] != 'N/A').sum()
@@ -1200,24 +1205,26 @@ ticker_lists = {}
 for period in selected_emas:
     col = f'ema{period}'
     if col in df_indicators.columns:
-        tickers_above = df_indicators[
-            df_indicators.apply(
-                lambda row: check_price_above_ema(row.get('close', np.nan), row.get(col, np.nan)),
-                axis=1
-            )
-        ]['ticker'].tolist()
+        # Vectorized: much faster than apply
+        above_mask = check_price_above_ema_vectorized(
+            df_indicators['close'],
+            df_indicators[col]
+        )
+        tickers_above = df_indicators[above_mask]['ticker'].tolist()
         ticker_lists[f'ema{period}'] = sorted(tickers_above)
 
 # RSI ticker lists
 if 'rsi' in df_indicators.columns:
-    df_indicators['rsi_category'] = df_indicators['rsi'].apply(categorize_rsi)
+    # Vectorized: much faster than apply
+    df_indicators['rsi_category'] = categorize_rsi_vectorized(df_indicators['rsi'])
     for category in selected_rsi:
         tickers_in_cat = df_indicators[df_indicators['rsi_category'] == category]['ticker'].tolist()
         ticker_lists[f'rsi_{category}'] = sorted(tickers_in_cat)
 
 # MACD ticker lists
 if 'macd_stage' in df_indicators.columns:
-    df_indicators['macd_category'] = df_indicators['macd_stage'].apply(categorize_macd_stage)
+    # Vectorized: much faster than apply
+    df_indicators['macd_category'] = categorize_macd_stage_vectorized(df_indicators['macd_stage'])
     for category in selected_macd:
         tickers_in_cat = df_indicators[df_indicators['macd_category'] == category]['ticker'].tolist()
         ticker_lists[f'macd_{category}'] = sorted(tickers_in_cat)
