@@ -21,6 +21,7 @@ import shutil
 import sys
 import tempfile
 from datetime import datetime, timedelta
+from pathlib import Path
 from typing import Optional, Set
 
 import pandas as pd
@@ -28,17 +29,33 @@ import pymongo
 import win32com.client
 from amibroker_apx_editor import modify_analysis
 
+# Optional: load .env like db_adapter.py
+try:
+    from dotenv import load_dotenv
+
+    SCRIPT_DIR = Path(__file__).parent
+    ENV_PATH = SCRIPT_DIR / ".env"
+    load_dotenv(dotenv_path=ENV_PATH, verbose=False)
+except ImportError:
+    # python-dotenv not required; fall back to OS env only
+    pass
+
 # Directory constants
 DATA_DIR = os.path.join(os.path.dirname(__file__), "data")
 PROJECT_DIR = r"C:\Program Files (x86)\AmiBroker\Projects"
 FORMULA_DIR = r"C:\Program Files (x86)\AmiBroker\Formulas\Custom\Screen"
 EXPORT_DIR = r"C:\Program Files (x86)\AmiBroker\Export"
 
-# Defaults
+# Defaults / Mongo settings (align with db_adapter style)
 DEFAULT_PROJECT = "ExportData.apx"
-DEFAULT_MONGO_URI = "mongodb://localhost:27017"
-DEFAULT_DB = "market_data"
-DEFAULT_COLLECTION = "ohlcv"
+
+# Optional hardcoded URI (only used if MONGODB_URI env not set)
+HARDCODED_MONGODB_URI = ""
+
+# Prefer env, then hardcoded, then localhost
+DEFAULT_MONGO_URI = os.getenv("MONGODB_URI") or HARDCODED_MONGODB_URI or "mongodb://localhost:27017"
+DEFAULT_DB = os.getenv("MONGODB_DB_NAME", "macd_reversal")
+DEFAULT_COLLECTION = os.getenv("MONGODB_OHLCV_COLLECTION", "ohlcv")
 
 
 class AmiProjectToMongo:
