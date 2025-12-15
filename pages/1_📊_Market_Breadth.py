@@ -976,11 +976,73 @@ with st.sidebar:
 df_indicators = get_indicators_for_date(selected_datetime)
 
 if df_indicators.empty:
-    st.warning(
-        f"⚠️ No indicator data found for {selected_date}.\n\n"
-        "Please enable recalculation in the sidebar to compute indicators."
-    )
-    st.stop()
+    st.warning(f"⚠️ No indicator data found for {selected_date}.")
+    
+    # Auto-calculate missing data
+    st.info("🔄 Automatically calculating indicators for missing date...")
+    
+    all_tickers = get_all_tickers_cached()
+    
+    if not all_tickers:
+        st.error("No tickers found in database. Please check your data source.")
+        st.stop()
+    
+    # Calculate date range (7 days warmup for this specific date)
+    calc_start_date = selected_datetime - timedelta(days=10)
+    calc_end_date = selected_datetime
+    
+    progress_bar = st.progress(0)
+    status_text = st.empty()
+    
+    success_count = 0
+    failed_count = 0
+    
+    start_time = datetime.now()
+    
+    for idx, ticker in enumerate(all_tickers):
+        status_text.text(f"Processing {ticker} ({idx + 1}/{len(all_tickers)})...")
+        
+        try:
+            df_indicators_calc = calculate_indicators_for_ticker(
+                ticker,
+                calc_start_date,
+                calc_end_date
+            )
+            
+            if not df_indicators_calc.empty:
+                if save_indicators_to_db(ticker, df_indicators_calc):
+                    success_count += 1
+                else:
+                    failed_count += 1
+            else:
+                failed_count += 1
+        except Exception as e:
+            failed_count += 1
+            status_text.text(f"⚠️ Error processing {ticker}: {e}")
+        
+        progress_bar.progress((idx + 1) / len(all_tickers))
+    
+    elapsed = (datetime.now() - start_time).total_seconds()
+    
+    status_text.empty()
+    progress_bar.empty()
+    
+    if success_count > 0:
+        st.success(
+            f"✅ Auto-calculation complete in {elapsed:.1f}s!\n\n"
+            f"- Success: {success_count} tickers\n"
+            f"- Failed: {failed_count} tickers"
+        )
+        
+        # Reload indicators after calculation
+        df_indicators = get_indicators_for_date(selected_datetime)
+        
+        if df_indicators.empty:
+            st.error("Still no data after calculation. Please check your data source.")
+            st.stop()
+    else:
+        st.error("Failed to calculate indicators. Please check your data source and try again.")
+        st.stop()
 
 # Calculate breadth
 breadth = calculate_market_breadth(df_indicators)
