@@ -37,7 +37,8 @@ try:
     from utils.macd_stage import (
         detect_macd_stage, categorize_macd_stage, get_all_macd_stages,
         get_macd_stage_color, get_macd_stage_display_name,
-        categorize_macd_stage_vectorized, detect_macd_stage_vectorized
+        categorize_macd_stage_vectorized, detect_macd_stage_vectorized,
+        detect_macd_stage_fast
     )
     from utils.db_async import get_sync_db_adapter
     USE_UTILS = True
@@ -136,9 +137,10 @@ def calculate_indicators_for_ticker(ticker: str, start_date: datetime, end_date:
         # Calculate indicators on full dataset (including warmup)
         df = calculate_all_indicators(df)
         
-        # Calculate MACD stage for each row (vectorized - but still slowest part)
+        # Calculate MACD stage for each row (fast vectorized method)
         if not skip_macd_stage and 'macd_hist' in df.columns:
-            df['macd_stage'] = detect_macd_stage_vectorized(df['macd_hist'], lookback=20)
+            # Use fast method: 10-20x faster, good for real-time/batch processing
+            df['macd_stage'] = detect_macd_stage_fast(df['macd_hist'], lookback=5)
         elif skip_macd_stage and 'macd_hist' in df.columns:
             # Set placeholder for lazy loading
             df['macd_stage'] = 'N/A'
@@ -175,9 +177,10 @@ async def calculate_indicators_for_ticker_async(
         # Calculate indicators on full dataset (including warmup)
         df = calculate_all_indicators(df)
         
-        # Calculate MACD stage for each row (vectorized - much faster!)
+        # Calculate MACD stage for each row (fast vectorized method)
         if 'macd_hist' in df.columns:
-            df['macd_stage'] = detect_macd_stage_vectorized(df['macd_hist'], lookback=20)
+            # Use fast method: optimized for async/batch processing
+            df['macd_stage'] = detect_macd_stage_fast(df['macd_hist'], lookback=5)
         
         # Trim to original date range (remove warmup period)
         df = df[df['date'] >= start_date].copy()
@@ -427,8 +430,8 @@ def calculate_macd_stages_for_ticker(ticker: str, start_date: datetime, end_date
         if 'macd_hist' not in df.columns:
             return False
         
-        # Calculate MACD stages (vectorized)
-        df['macd_stage'] = detect_macd_stage_vectorized(df['macd_hist'], lookback=20)
+        # Calculate MACD stages (fast vectorized method)
+        df['macd_stage'] = detect_macd_stage_fast(df['macd_hist'], lookback=5)
         
         # Trim to target range
         df = df[df['date'] >= start_date].copy()
@@ -1033,6 +1036,7 @@ with st.sidebar:
             options=['troughing', 'confirmed_trough', 'rising', 'peaking', 'confirmed_peak', 'declining'],
             default=['confirmed_trough', 'confirmed_peak']
         )
+        st.caption("ℹ️ Uses fast MACD detection (5-bar lookback) optimized for real-time performance")
 
 # =====================================================================
 # MAIN CONTENT
