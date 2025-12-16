@@ -376,31 +376,42 @@ st.markdown("---")
 
 # Display prediction lists
 if not filtered_results:
-    st.info(f"No stocks meet the minimum RS percentile threshold of {min_percentile}%.")
+    st.info(f"No stocks meet the minimum score threshold of {min_score}.")
 else:
     st.markdown("## 🎯 Daily Prediction List")
-    st.caption(f"Showing {len(filtered_results)} stocks ranked by RS percentile")
+    st.caption(f"Showing {len(filtered_results)} stocks ranked by leader score")
     
     # Create results table
     for idx, result in enumerate(filtered_results[:50], start=1):  # Limit to top 50
         badge_class = f"chip-{result['badge_color']}"
         
         # Create expandable card
-        with st.expander(f"#{idx} | {result['ticker']} | RS: {result['rs_percentile']:.1f}% | {result['list_class']}", expanded=(idx <= 3)):
+        with st.expander(f"#{idx} | {result['ticker']} | Score: {result['score']} | {result['list_class']}", expanded=(idx <= 3)):
             col1, col2 = st.columns(2)
             
             with col1:
                 st.markdown(f"**Price:** {result['close']:.2f}")
                 st.markdown(f"**RS Percentile:** {result['rs_percentile']:.1f}%")
-                st.markdown(f"**RS Value:** {result['rs_current']:.2f}")
-                st.markdown(f"**Classification:** `{result['list_class']}`")
+                st.markdown(f"**RSI:** {result['rsi_daily']:.1f}")
                 
             with col2:
-                st.markdown(f"**Description:** {result['description']}")
-                if show_rsi and not np.isnan(result['rsi_daily']):
-                    st.markdown(f"**RSI (Daily):** {result['rsi_daily']:.1f}")
-                if show_obv and result['obv_status'] != 'N/A':
-                    st.markdown(f"**OBV Status:** {result['obv_status']}")
+                st.markdown(f"**OBV Status:** {result['obv_status']}")
+                st.markdown(f"**Classification:** `{result['list_class']}`")
+                st.markdown(f"**Expectation:** {result['expectation']}")
+            
+            with col3:
+                if show_score_breakdown:
+                    st.markdown("**Score Breakdown:**")
+                    breakdown_text = format_score_breakdown(result['score_breakdown'])
+                    st.code(breakdown_text, language=None)
+            
+            # Entry triggers
+            if show_entry_triggers and result['has_entry_trigger']:
+                st.success(f"✅ Entry Triggers: {', '.join(result['entry_triggers'])}")
+            
+            # Exit signals
+            if show_exit_signals and result['should_exit']:
+                st.error(f"⚠️ Exit Signals: {', '.join(result['exit_reasons'])}")
 
 st.markdown("---")
 
@@ -413,12 +424,14 @@ if filtered_results:
         {
             'Rank': idx + 1,
             'Ticker': r['ticker'],
-            'RS Percentile': f"{r['rs_percentile']:.1f}",
-            'RS Value': f"{r['rs_current']:.2f}",
+            'Score': r['score'],
             'List': r['list_class'],
+            'RS %ile': f"{r['rs_percentile']:.1f}",
+            'RSI': f"{r['rsi_daily']:.1f}",
+            'OBV Status': r['obv_status'],
+            'Expectation': r['expectation'],
             'Price': f"{r['close']:.2f}",
-            'RSI': f"{r['rsi_daily']:.1f}" if not np.isnan(r['rsi_daily']) else 'N/A',
-            'OBV Status': r['obv_status']
+            'Entry Trigger': 'Yes' if r['has_entry_trigger'] else 'No'
         }
         for idx, r in enumerate(filtered_results[:50])
     ])
@@ -464,5 +477,5 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 st.markdown("---")
-st.markdown("_Stock Leaders Detection • Relative Strength Focus • Daily EOD Analysis_")
+st.markdown("_Stock Leaders Detection • RS + RSI + OBV • Daily EOD Analysis_")
 
