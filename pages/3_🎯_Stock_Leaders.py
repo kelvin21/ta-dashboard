@@ -117,10 +117,32 @@ def analyze_stock_leadership(ticker: str, analysis_date: datetime, vnindex_data:
     # Calculate RS MA20 for crossover detection
     df['rs_ma20'] = df['rs'].rolling(window=20, min_periods=20).mean()
     
+    # Calculate RSI on RS values (to detect overbought RS)
+    rs_rsi = calculate_rsi(df['rs'], period=14)
+    df['rs_rsi'] = rs_rsi
+    
     # Get current values
     current = df.iloc[-1]
     rs_current = current['rs']
     rs_ma20 = current.get('rs_ma20', np.nan)
+    rs_rsi_value = current.get('rs_rsi', np.nan)
+    
+    # Calculate distance from RS MA20 (percentage)
+    rs_distance_pct = np.nan
+    if not np.isnan(rs_ma20) and rs_ma20 != 0:
+        rs_distance_pct = ((rs_current - rs_ma20) / rs_ma20) * 100
+    
+    # Flag overextended RS (potential distribution zone)
+    distribution_warning = False
+    distribution_reason = []
+    
+    if not np.isnan(rs_rsi_value) and rs_rsi_value > 70:
+        distribution_warning = True
+        distribution_reason.append(f"RS RSI Overbought ({rs_rsi_value:.1f})")
+    
+    if not np.isnan(rs_distance_pct) and rs_distance_pct > 10:
+        distribution_warning = True
+        distribution_reason.append(f"RS {rs_distance_pct:.1f}% Above MA20")
     
     # Detect RS crossover with MA20
     rs_crossover_signal = None
@@ -177,13 +199,21 @@ def analyze_stock_leadership(ticker: str, analysis_date: datetime, vnindex_data:
     elif rs_crossover_signal == 'Near Bullish':
         score += 10  # About to cross
     
+    # Reduce score for overextended RS (distribution warning)
+    if distribution_warning:
+        score -= 10  # Penalize overextended stocks
+    
     return {
         'ticker': ticker,
         'close': current['close'],
         'rs_current': rs_current,
         'rs_ma20': rs_ma20,
+        'rs_rsi': rs_rsi_value,
+        'rs_distance_pct': rs_distance_pct,
         'rs_crossover_signal': rs_crossover_signal,
         'rs_crossover_status': rs_crossover_status,
+        'distribution_warning': distribution_warning,
+        'distribution_reason': ', '.join(distribution_reason) if distribution_reason else 'None',
         'rs_percentile': 0,  # Will update later
         'rsi_daily': rsi_daily,
         'obv_status': obv_status,
@@ -249,6 +279,13 @@ with st.sidebar:
         help="Filter by RS vs MA20 status"
     )
     
+    # Distribution filter
+    hide_overextended = st.checkbox(
+        "Hide Overextended (Distribution Zone)",
+        value=False,
+        help="Hide stocks with RS RSI >70 or RS >10% above MA20"
+    )
+    
     st.markdown("---")
     
     # Display options
@@ -257,6 +294,7 @@ with st.sidebar:
     show_rsi = st.checkbox("Show RSI (Optional)", value=True)
     show_obv = st.checkbox("Show OBV (Optional)", value=False)
     show_rs_ma20 = st.checkbox("Show RS MA20", value=True)
+    show_rs_indicators = st.checkbox("Show RS RSI & Distance", value=True)
     
     st.markdown("---")
     
@@ -403,6 +441,12 @@ elif filter_crossover == "Near Crossover":
 elif filter_crossover == "Above MA20":
     filtered_results = [r for r in filtered_results if 'Above MA20' in r.get('rs_crossover_status', '')]
 
+# Apply distribution filter
+if hide_overextended:
+    filtered_results = [r for r in filtered_results if not r.get('distribution_warning', False)]
+elif filter_crossover == "Above MA20":
+    filtered_results = [r for r in filtered_results if 'Above MA20' in r.get('rs_crossover_status', '')]
+
 # Sort by score (prioritizes recent crossovers due to bonus)
 filtered_results.sort(key=lambda x: x['score'], reverse=True)
 
@@ -411,12 +455,13 @@ st.markdown("---")
 # Summary Statistics
 st.markdown("## 📊 Prediction List Summary")
 
-col1, col2, col3, col4, col5 = st.columns(5)
+col1, col2, col3, col4, col5, col6 = st.columns(6)
 
 list_a_count = sum(1 for r in filtered_results if r['list_class'] == 'List A')
 list_b_count = sum(1 for r in filtered_results if r['list_class'] == 'List B')
 crossover_count = sum(1 for r in filtered_results if r.get('rs_crossover_signal') == 'Bullish Cross')
 near_crossover_count = sum(1 for r in filtered_results if r.get('rs_crossover_signal') == 'Near Bullish')
+distribution_count = sum(1 for r in results if r.get('distribution_warning', False))
 total_analyzed = len(results)
 
 with col1:
@@ -432,6 +477,9 @@ with col4:
     st.metric("📈 Near Cross", near_crossover_count, delta=None, help="About to cross MA20")
 
 with col5:
+    st.metric("⚠️ Overextended", distribution_count, delta=None, help="RS RSI >70 or >10% above MA20")
+
+with col6:
     st.metric("Total Analyzed", total_analyzed, delta=None)
 
 st.markdown("---")
@@ -453,6 +501,8 @@ else:
             crossover_indicator = " 🚀"
         elif result.get('rs_crossover_signal') == 'Near Bullish':
             crossover_indicator = " 📈"
+        elif result.get('distribution_warning', False):
+            crossover_indicator = " ⚠️"
         
         # Create expandable card
         with st.expander(f"#{idx} | {result['ticker']}{crossover_indicator} | RS: {result['rs_percentile']:.1f}% | {result['list_class']}", expanded=(idx <= 3)):
@@ -464,10 +514,21 @@ else:
                 st.markdown(f"**RS Value:** {result['rs_current']:.2f}")
                 if show_rs_ma20 and not np.isnan(result.get('rs_ma20', np.nan)):
                     st.markdown(f"**RS MA20:** {result['rs_ma20']:.2f}")
+                if show_rs_indicators:
+                    if not np.isnan(result.get('rs_rsi', np.nan)):
+                        rs_rsi_color = '🔴' if result['rs_rsi'] > 70 else '🟢' if result['rs_rsi'] < 30 else '🟡'
+                        st.markdown(f"**RS RSI:** {rs_rsi_color} {result['rs_rsi']:.1f}")
+                    if not np.isnan(result.get('rs_distance_pct', np.nan)):
+                        st.markdown(f"**RS vs MA20:** {result['rs_distance_pct']:+.1f}%")
                 st.markdown(f"**Classification:** `{result['list_class']}`")
                 
             with col2:
                 st.markdown(f"**Description:** {result['description']}")
+                
+                # Distribution warning
+                if result.get('distribution_warning', False):
+                    st.error(f"⚠️ **Overextended:** {result['distribution_reason']}")
+                
                 # Highlight crossover status
                 crossover_status = result.get('rs_crossover_status', 'None')
                 if '🚀' in crossover_status or '📈' in crossover_status:
@@ -496,8 +557,12 @@ if filtered_results:
             'RS Percentile': f"{r['rs_percentile']:.1f}",
             'RS Value': f"{r['rs_current']:.2f}",
             'RS MA20': f"{r.get('rs_ma20', 0):.2f}" if not np.isnan(r.get('rs_ma20', np.nan)) else 'N/A',
+            'RS RSI': f"{r.get('rs_rsi', 0):.1f}" if not np.isnan(r.get('rs_rsi', np.nan)) else 'N/A',
+            'RS Distance %': f"{r.get('rs_distance_pct', 0):+.1f}" if not np.isnan(r.get('rs_distance_pct', np.nan)) else 'N/A',
             'RS Status': r.get('rs_crossover_status', 'None'),
             'Crossover Signal': r.get('rs_crossover_signal', 'None'),
+            'Distribution Warning': 'Yes' if r.get('distribution_warning', False) else 'No',
+            'Distribution Reason': r.get('distribution_reason', 'None'),
             'List': r['list_class'],
             'Price': f"{r['close']:.2f}",
             'RSI': f"{r['rsi_daily']:.1f}" if not np.isnan(r['rsi_daily']) else 'N/A',
