@@ -1,7 +1,7 @@
 """
 Stock Leaders Detection Page
 Daily prediction list of stocks with high probability of outperforming VNINDEX.
-Based on Relative Strength, RSI, and OBV analysis.
+Primarily based on Relative Strength (RS) vs VNINDEX.
 """
 import os
 import sys
@@ -51,7 +51,7 @@ if css_path.exists():
 
 # Title
 st.markdown("# 🎯 Outperforming Stock Detection")
-st.markdown("Daily prediction list using Relative Strength, RSI, and OBV")
+st.markdown("Daily prediction list based on **Relative Strength vs VNINDEX**")
 
 # =====================================================================
 # HELPER FUNCTIONS
@@ -93,7 +93,7 @@ def load_price_data_for_ticker(ticker: str, start_date: datetime, end_date: date
 @st.cache_data(ttl=600)
 def analyze_stock_leadership(ticker: str, analysis_date: datetime, vnindex_data: pd.DataFrame) -> Dict:
     """
-    Analyze single stock for leadership potential.
+    Analyze single stock for leadership potential based primarily on RS.
     
     Args:
         ticker: Stock ticker
@@ -110,16 +110,7 @@ def analyze_stock_leadership(ticker: str, analysis_date: datetime, vnindex_data:
     if df.empty or len(df) < 20:
         return None
     
-    # Calculate indicators
-    df = calculate_all_indicators(df)
-    
-    # Calculate OBV
-    if 'volume' in df.columns:
-        df['obv'] = calculate_obv(df['close'], df['volume'])
-    else:
-        return None
-    
-    # Calculate Relative Strength
+    # Calculate Relative Strength (PRIMARY METRIC)
     rs = calculate_relative_strength(df['close'], vnindex_data['close'])
     if rs.empty or rs.isna().all():
         return None
@@ -128,61 +119,40 @@ def analyze_stock_leadership(ticker: str, analysis_date: datetime, vnindex_data:
     
     # Get current values
     current = df.iloc[-1]
-    
-    # RSI values
-    rsi_daily = current.get('rsi', np.nan)
-    rsi_weekly = rsi_daily  # Simplified - would need weekly data for accurate weekly RSI
-    
-    # OBV analysis
-    obv_analysis = analyze_obv_status(df['obv'])
-    
-    # RS percentile (will be calculated across universe later)
     rs_current = current['rs']
     
-    # Calculate score (without percentile for now)
-    score, breakdown = calculate_leader_score(
-        rs=df['rs'],
-        rs_percentile=0,  # Will update later
-        rsi_daily=rsi_daily,
-        rsi_weekly=rsi_weekly,
-        obv_analysis=obv_analysis
-    )
+    # Optional: Calculate indicators if available
+    try:
+        df = calculate_all_indicators(df)
+        rsi_daily = current.get('rsi', np.nan)
+    except:
+        rsi_daily = np.nan
     
-    # Classification
-    list_class, badge_color, description = classify_prediction_list(score)
+    # Optional: Calculate OBV if available
+    try:
+        if 'volume' in df.columns:
+            df['obv'] = calculate_obv(df['close'], df['volume'])
+            obv_analysis = analyze_obv_status(df['obv'])
+            obv_status = obv_analysis['status']
+        else:
+            obv_status = 'N/A'
+    except:
+        obv_status = 'N/A'
     
-    # Expectation
-    expectation = generate_expectation(score, obv_analysis['status'], rsi_daily)
-    
-    # Entry triggers
-    ema20 = current.get('ema20', np.nan)
-    volume_ratio = 1.0  # Simplified
-    has_trigger, trigger_reasons = check_entry_trigger(rsi_daily, current['close'], ema20, volume_ratio)
-    
-    # Exit signals
-    rsi_last_3 = df['rsi'].iloc[-3:].tolist() if len(df) >= 3 else []
-    should_exit, exit_reasons = check_exit_signal(df['rs'], df['obv'], rsi_last_3)
+    # Simple RS-based score (will be overwritten with percentile later)
+    score = 50  # Placeholder
     
     return {
         'ticker': ticker,
         'close': current['close'],
         'rs_current': rs_current,
-        'rs_percentile': 0,  # Will update
+        'rs_percentile': 0,  # Will update later
         'rsi_daily': rsi_daily,
-        'rsi_weekly': rsi_weekly,
-        'obv_status': obv_analysis['status'],
+        'obv_status': obv_status,
         'score': score,
-        'score_breakdown': breakdown,
-        'list_class': list_class,
-        'badge_color': badge_color,
-        'description': description,
-        'expectation': expectation,
-        'has_entry_trigger': has_trigger,
-        'entry_triggers': trigger_reasons,
-        'should_exit': should_exit,
-        'exit_reasons': exit_reasons,
-        'ema20': ema20,
-        'ema50': current.get('ema50', np.nan)
+        'list_class': 'Monitor',
+        'badge_color': 'gray',
+        'description': 'Pending classification',
     }
 
 # =====================================================================
@@ -220,14 +190,14 @@ with st.sidebar:
         help="VN30 recommended for focused leaders"
     )
     
-    # Score filter
-    min_score = st.slider(
-        "Minimum Leader Score",
+    # RS Percentile filter
+    min_percentile = st.slider(
+        "Minimum RS Percentile",
         min_value=0,
         max_value=100,
-        value=60,
+        value=70,
         step=5,
-        help="60+ = List B, 75+ = List A"
+        help="Higher RS = outperforming VNINDEX"
     )
     
     st.markdown("---")
