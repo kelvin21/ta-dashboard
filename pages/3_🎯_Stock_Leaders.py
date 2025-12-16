@@ -114,9 +114,41 @@ def analyze_stock_leadership(ticker: str, analysis_date: datetime, vnindex_data:
     
     df['rs'] = rs
     
+    # Calculate RS MA20 for crossover detection
+    df['rs_ma20'] = df['rs'].rolling(window=20, min_periods=20).mean()
+    
     # Get current values
     current = df.iloc[-1]
     rs_current = current['rs']
+    rs_ma20 = current.get('rs_ma20', np.nan)
+    
+    # Detect RS crossover with MA20
+    rs_crossover_signal = None
+    rs_crossover_status = 'None'
+    
+    if len(df) >= 21 and not np.isnan(rs_ma20):
+        prev = df.iloc[-2]
+        rs_prev = prev['rs']
+        rs_ma20_prev = prev.get('rs_ma20', np.nan)
+        
+        if not np.isnan(rs_ma20_prev):
+            # Just crossed above
+            if rs_prev <= rs_ma20_prev and rs_current > rs_ma20:
+                rs_crossover_signal = 'Bullish Cross'
+                rs_crossover_status = '🚀 Just Crossed Above'
+            # Just crossed below
+            elif rs_prev >= rs_ma20_prev and rs_current < rs_ma20:
+                rs_crossover_signal = 'Bearish Cross'
+                rs_crossover_status = '⚠️ Just Crossed Below'
+            # Close to crossing above (within 2% of MA20 and below it)
+            elif rs_current < rs_ma20 and (rs_ma20 - rs_current) / rs_ma20 <= 0.02:
+                rs_crossover_signal = 'Near Bullish'
+                rs_crossover_status = '📈 Near Cross Above'
+            # Above MA20
+            elif rs_current > rs_ma20:
+                rs_crossover_status = '✓ Above MA20'
+            else:
+                rs_crossover_status = 'Below MA20'
     
     # Optional: Calculate indicators if available
     try:
@@ -139,10 +171,19 @@ def analyze_stock_leadership(ticker: str, analysis_date: datetime, vnindex_data:
     # Simple RS-based score (will be overwritten with percentile later)
     score = 50  # Placeholder
     
+    # Add bonus for RS crossover signals
+    if rs_crossover_signal == 'Bullish Cross':
+        score += 15  # Just crossed - highest priority
+    elif rs_crossover_signal == 'Near Bullish':
+        score += 10  # About to cross
+    
     return {
         'ticker': ticker,
         'close': current['close'],
         'rs_current': rs_current,
+        'rs_ma20': rs_ma20,
+        'rs_crossover_signal': rs_crossover_signal,
+        'rs_crossover_status': rs_crossover_status,
         'rs_percentile': 0,  # Will update later
         'rsi_daily': rsi_daily,
         'obv_status': obv_status,
@@ -199,11 +240,23 @@ with st.sidebar:
     
     st.markdown("---")
     
+    # Crossover filter
+    st.subheader("🎯 RS Crossover Filter")
+    filter_crossover = st.selectbox(
+        "Show Only",
+        options=["All Stocks", "RS Crossovers Only", "Near Crossover", "Above MA20"],
+        index=0,
+        help="Filter by RS vs MA20 status"
+    )
+    
+    st.markdown("---")
+    
     # Display options
     st.subheader("📊 Display Options")
     
     show_rsi = st.checkbox("Show RSI (Optional)", value=True)
     show_obv = st.checkbox("Show OBV (Optional)", value=False)
+    show_rs_ma20 = st.checkbox("Show RS MA20", value=True)
     
     st.markdown("---")
     
@@ -342,7 +395,15 @@ for result in results:
 # Filter by minimum RS percentile
 filtered_results = [r for r in results if r['rs_percentile'] >= min_percentile]
 
-# Sort by score
+# Apply crossover filter
+if filter_crossover == "RS Crossovers Only":
+    filtered_results = [r for r in filtered_results if r.get('rs_crossover_signal') == 'Bullish Cross']
+elif filter_crossover == "Near Crossover":
+    filtered_results = [r for r in filtered_results if r.get('rs_crossover_signal') in ['Bullish Cross', 'Near Bullish']]
+elif filter_crossover == "Above MA20":
+    filtered_results = [r for r in filtered_results if 'Above MA20' in r.get('rs_crossover_status', '')]
+
+# Sort by score (prioritizes recent crossovers due to bonus)
 filtered_results.sort(key=lambda x: x['score'], reverse=True)
 
 st.markdown("---")
@@ -350,12 +411,13 @@ st.markdown("---")
 # Summary Statistics
 st.markdown("## 📊 Prediction List Summary")
 
-col1, col2, col3, col4 = st.columns(4)
+col1, col2, col3, col4, col5 = st.columns(5)
 
 list_a_count = sum(1 for r in filtered_results if r['list_class'] == 'List A')
 list_b_count = sum(1 for r in filtered_results if r['list_class'] == 'List B')
+crossover_count = sum(1 for r in filtered_results if r.get('rs_crossover_signal') == 'Bullish Cross')
+near_crossover_count = sum(1 for r in filtered_results if r.get('rs_crossover_signal') == 'Near Bullish')
 total_analyzed = len(results)
-avg_score = np.mean([r['score'] for r in filtered_results]) if filtered_results else 0
 
 with col1:
     st.metric("List A (High Conviction)", list_a_count, delta=None)
@@ -364,10 +426,13 @@ with col2:
     st.metric("List B (Watchlist)", list_b_count, delta=None)
 
 with col3:
-    st.metric("Total Analyzed", total_analyzed, delta=None)
+    st.metric("🚀 RS Crossovers", crossover_count, delta=None, help="Just crossed above MA20")
 
 with col4:
-    st.metric("Avg Score", f"{avg_score:.1f}", delta=None)
+    st.metric("📈 Near Cross", near_crossover_count, delta=None, help="About to cross MA20")
+
+with col5:
+    st.metric("Total Analyzed", total_analyzed, delta=None)
 
 st.markdown("---")
 
@@ -382,18 +447,36 @@ else:
     for idx, result in enumerate(filtered_results[:50], start=1):  # Limit to top 50
         badge_class = f"chip-{result['badge_color']}"
         
+        # Add crossover indicator to title
+        crossover_indicator = ""
+        if result.get('rs_crossover_signal') == 'Bullish Cross':
+            crossover_indicator = " 🚀"
+        elif result.get('rs_crossover_signal') == 'Near Bullish':
+            crossover_indicator = " 📈"
+        
         # Create expandable card
-        with st.expander(f"#{idx} | {result['ticker']} | RS: {result['rs_percentile']:.1f}% | {result['list_class']}", expanded=(idx <= 3)):
+        with st.expander(f"#{idx} | {result['ticker']}{crossover_indicator} | RS: {result['rs_percentile']:.1f}% | {result['list_class']}", expanded=(idx <= 3)):
             col1, col2 = st.columns(2)
             
             with col1:
                 st.markdown(f"**Price:** {result['close']:.2f}")
                 st.markdown(f"**RS Percentile:** {result['rs_percentile']:.1f}%")
                 st.markdown(f"**RS Value:** {result['rs_current']:.2f}")
+                if show_rs_ma20 and not np.isnan(result.get('rs_ma20', np.nan)):
+                    st.markdown(f"**RS MA20:** {result['rs_ma20']:.2f}")
                 st.markdown(f"**Classification:** `{result['list_class']}`")
                 
             with col2:
                 st.markdown(f"**Description:** {result['description']}")
+                # Highlight crossover status
+                crossover_status = result.get('rs_crossover_status', 'None')
+                if '🚀' in crossover_status or '📈' in crossover_status:
+                    st.success(f"**RS Status:** {crossover_status}")
+                elif '⚠️' in crossover_status:
+                    st.warning(f"**RS Status:** {crossover_status}")
+                else:
+                    st.markdown(f"**RS Status:** {crossover_status}")
+                    
                 if show_rsi and not np.isnan(result['rsi_daily']):
                     st.markdown(f"**RSI (Daily):** {result['rsi_daily']:.1f}")
                 if show_obv and result['obv_status'] != 'N/A':
@@ -412,6 +495,9 @@ if filtered_results:
             'Ticker': r['ticker'],
             'RS Percentile': f"{r['rs_percentile']:.1f}",
             'RS Value': f"{r['rs_current']:.2f}",
+            'RS MA20': f"{r.get('rs_ma20', 0):.2f}" if not np.isnan(r.get('rs_ma20', np.nan)) else 'N/A',
+            'RS Status': r.get('rs_crossover_status', 'None'),
+            'Crossover Signal': r.get('rs_crossover_signal', 'None'),
             'List': r['list_class'],
             'Price': f"{r['close']:.2f}",
             'RSI': f"{r['rsi_daily']:.1f}" if not np.isnan(r['rsi_daily']) else 'N/A',
