@@ -768,16 +768,23 @@ def plot_vnindex_chart(start_date: datetime, end_date: datetime):
         
         # RSI
         if 'rsi' in df.columns:
+            # Clip RSI values to valid range [0, 100] and handle NaN
+            rsi_values = df['rsi'].clip(lower=0, upper=100)
+            rsi_values = rsi_values.fillna(50)  # Fill NaN with neutral value
+            
             fig.add_trace(
                 go.Scatter(
-                    x=df['date'], y=df['rsi'],
+                    x=df['date'], 
+                    y=rsi_values,
                     name='RSI',
-                    line=dict(color='purple', width=2)
+                    line=dict(color='purple', width=2),
+                    mode='lines'
                 ),
                 row=2, col=1
             )
-            fig.add_hline(y=70, line_dash="dash", line_color="red", opacity=0.5, row=2, col=1)
-            fig.add_hline(y=30, line_dash="dash", line_color="green", opacity=0.5, row=2, col=1)
+            # Add reference lines
+            fig.add_hline(y=70, line_dash="dash", line_color="red", opacity=0.5, row=2, col=1, annotation_text="Overbought")
+            fig.add_hline(y=30, line_dash="dash", line_color="green", opacity=0.5, row=2, col=1, annotation_text="Oversold")
             fig.add_hline(y=50, line_dash="dot", line_color="gray", opacity=0.3, row=2, col=1)
         
         # MACD Histogram
@@ -802,7 +809,13 @@ def plot_vnindex_chart(start_date: datetime, end_date: datetime):
         )
         
         fig.update_yaxes(title_text="Price", row=1, col=1)
-        fig.update_yaxes(title_text="RSI", row=2, col=1, range=[0, 100])
+        fig.update_yaxes(
+            title_text="RSI", 
+            row=2, col=1, 
+            range=[0, 100],
+            fixedrange=False,
+            constraintoward='middle'
+        )
         fig.update_yaxes(title_text="MACD", row=3, col=1)
         
         st.plotly_chart(fig, use_container_width=True)
