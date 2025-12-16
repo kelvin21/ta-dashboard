@@ -22,7 +22,8 @@ def detect_macd_stage_vectorized(hist: pd.Series, lookback: int = 20) -> pd.Seri
         return pd.Series(['N/A'] * len(hist), index=hist.index)
     
     stages = []
-    hist_values = hist.fillna(method='ffill').fillna(0).values
+    # Use ffill() instead of deprecated fillna(method='ffill')
+    hist_values = hist.ffill().fillna(0).values
     
     for i in range(len(hist_values)):
         if i < 2:
