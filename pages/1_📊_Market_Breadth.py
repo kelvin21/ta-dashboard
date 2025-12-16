@@ -110,8 +110,18 @@ def load_price_data_for_ticker(ticker: str, start_date: datetime, end_date: date
     except Exception as e:
         return pd.DataFrame()
 
-def calculate_indicators_for_ticker(ticker: str, start_date: datetime, end_date: datetime) -> pd.DataFrame:
-    """Calculate all indicators for a ticker."""
+def calculate_indicators_for_ticker(ticker: str, start_date: datetime, end_date: datetime, skip_macd_stage: bool = False) -> pd.DataFrame:
+    """Calculate all indicators for a ticker.
+    
+    Args:
+        ticker: Ticker symbol
+        start_date: Start date
+        end_date: End date
+        skip_macd_stage: If True, skip MACD stage calculation for faster processing
+    
+    Returns:
+        DataFrame with indicators
+    """
     try:
         # Add warmup period for indicators (200 days = ~290 calendar days)
         warmup_days = 365  # Use 1 year warmup to ensure all indicators have enough data
@@ -126,9 +136,12 @@ def calculate_indicators_for_ticker(ticker: str, start_date: datetime, end_date:
         # Calculate indicators on full dataset (including warmup)
         df = calculate_all_indicators(df)
         
-        # Calculate MACD stage for each row (vectorized - much faster!)
-        if 'macd_hist' in df.columns:
+        # Calculate MACD stage for each row (vectorized - but still slowest part)
+        if not skip_macd_stage and 'macd_hist' in df.columns:
             df['macd_stage'] = detect_macd_stage_vectorized(df['macd_hist'], lookback=20)
+        elif skip_macd_stage and 'macd_hist' in df.columns:
+            # Set placeholder for lazy loading
+            df['macd_stage'] = 'N/A'
         
         # Trim to original date range (remove warmup period)
         df = df[df['date'] >= start_date].copy()
@@ -386,6 +399,69 @@ def run_async_batch_calculation(
             return loop.run_until_complete(run())
         finally:
             loop.close()
+
+def calculate_macd_stages_for_ticker(ticker: str, start_date: datetime, end_date: datetime) -> bool:
+    """Calculate only MACD stages for a ticker that already has indicators.
+    
+    Args:
+        ticker: Ticker symbol
+        start_date: Start date
+        end_date: End date
+    
+    Returns:
+        True if successful, False otherwise
+    """
+    try:
+        # Load with warmup for proper stage detection
+        warmup_days = 365
+        warmup_start = start_date - timedelta(days=warmup_days)
+        
+        df = load_price_data_for_ticker(ticker, warmup_start, end_date)
+        
+        if df.empty or 'close' not in df.columns:
+            return False
+        
+        # Calculate only MACD
+        df = calculate_all_indicators(df)
+        
+        if 'macd_hist' not in df.columns:
+            return False
+        
+        # Calculate MACD stages (vectorized)
+        df['macd_stage'] = detect_macd_stage_vectorized(df['macd_hist'], lookback=20)
+        
+        # Trim to target range
+        df = df[df['date'] >= start_date].copy()
+        
+        # Update only the macd_stage field in database
+        from pymongo import MongoClient
+        mongo_uri = os.getenv("MONGODB_URI")
+        if not mongo_uri:
+            return False
+            
+        client = MongoClient(mongo_uri + "&socketTimeoutMS=60000&connectTimeoutMS=60000")
+        db_name = os.getenv("MONGODB_DB_NAME", "macd_reversal")
+        collection = client[db_name].indicators
+        
+        for _, row in df.iterrows():
+            if pd.notna(row.get('date')):
+                date_value = row['date']
+                if isinstance(date_value, pd.Timestamp):
+                    date_value = date_value.to_pydatetime()
+                
+                collection.update_one(
+                    {"ticker": ticker.upper(), "date": date_value},
+                    {"$set": {
+                        "macd_stage": str(row.get('macd_stage', 'N/A')),
+                        "updated_at": datetime.now()
+                    }}
+                )
+        
+        client.close()
+        return True
+    except Exception as e:
+        return False
+
 
 def save_indicators_to_db(ticker: str, df: pd.DataFrame) -> bool:
     """Save calculated indicators to database."""
@@ -970,6 +1046,7 @@ if df_indicators.empty:
     
     # Auto-calculate missing data
     st.info("🔄 Automatically calculating indicators for missing date...")
+    st.caption("📊 Phase 1: Fast indicators (EMA, RSI, MACD) | Phase 2: MACD stages (lazy load)")
     
     all_tickers = get_all_tickers_cached()
     
@@ -981,24 +1058,29 @@ if df_indicators.empty:
     calc_start_date = selected_datetime - timedelta(days=10)
     calc_end_date = selected_datetime
     
+    # === PHASE 1: Fast indicators without MACD stages ===
     progress_bar = st.progress(0)
     status_text = st.empty()
     
     success_count = 0
     failed_count = 0
+    ticker_times = []
     
     start_time = datetime.now()
-    ticker_times = []
+    phase1_start = datetime.now()
+    
+    status_text.text("📊 Phase 1/2: Calculating fast indicators (EMA, RSI, MACD)...")
     
     for idx, ticker in enumerate(all_tickers):
         ticker_start = datetime.now()
-        status_text.text(f"Processing {ticker} ({idx + 1}/{len(all_tickers)})...")
         
         try:
+            # Skip MACD stage for faster initial load
             df_indicators_calc = calculate_indicators_for_ticker(
                 ticker,
                 calc_start_date,
-                calc_end_date
+                calc_end_date,
+                skip_macd_stage=True  # Fast mode!
             )
             
             if not df_indicators_calc.empty:
@@ -1010,7 +1092,6 @@ if df_indicators.empty:
                 failed_count += 1
         except Exception as e:
             failed_count += 1
-            status_text.text(f"⚠️ Error processing {ticker}: {e}")
         
         ticker_elapsed = (datetime.now() - ticker_start).total_seconds()
         ticker_times.append(ticker_elapsed)
@@ -1019,32 +1100,67 @@ if df_indicators.empty:
         
         progress_bar.progress((idx + 1) / len(all_tickers))
         status_text.text(
-            f"Processed {ticker} in {ticker_elapsed:.1f}s | "
-            f"Avg: {avg_time:.1f}s/ticker | "
-            f"ETA: {remaining:.0f}s"
+            f"Phase 1: {ticker} ({idx + 1}/{len(all_tickers)}) | "
+            f"{ticker_elapsed:.1f}s | Avg: {avg_time:.1f}s | ETA: {remaining:.0f}s"
         )
     
-    elapsed = (datetime.now() - start_time).total_seconds()
+    phase1_elapsed = (datetime.now() - phase1_start).total_seconds()
     
-    status_text.empty()
-    progress_bar.empty()
-    
+    # Show phase 1 results
     if success_count > 0:
         st.success(
-            f"✅ Auto-calculation complete in {elapsed:.1f}s!\n\n"
-            f"- Success: {success_count} tickers\n"
-            f"- Failed: {failed_count} tickers"
+            f"✅ Phase 1 complete in {phase1_elapsed:.1f}s! "
+            f"({len(all_tickers)/phase1_elapsed:.1f} tickers/sec)\n\n"
+            f"Success: {success_count} | Failed: {failed_count}"
         )
         
-        # Reload indicators after calculation
+        # Reload indicators to show data immediately
         df_indicators = get_indicators_for_date(selected_datetime)
         
-        if df_indicators.empty:
-            st.error("Still no data after calculation. Please check your data source.")
+        if not df_indicators.empty:
+            # Show data with placeholder MACD stages
+            st.info("📈 Showing market breadth with basic indicators. MACD stages: N/A (calculate below if needed)")
+            
+            # === PHASE 2: Calculate MACD stages (optional, user-triggered) ===
+            if st.button("🔄 Calculate MACD Stages Now", type="secondary", key="calc_macd_stages"):
+                phase2_start = datetime.now()
+                status_text.text("📊 Phase 2/2: Calculating MACD stages...")
+                progress_bar.progress(0)
+                
+                macd_success = 0
+                macd_failed = 0
+                
+                for idx, ticker in enumerate(all_tickers):
+                    if calculate_macd_stages_for_ticker(ticker, calc_start_date, calc_end_date):
+                        macd_success += 1
+                    else:
+                        macd_failed += 1
+                    
+                    progress_bar.progress((idx + 1) / len(all_tickers))
+                    status_text.text(f"Phase 2: MACD stages for {ticker} ({idx + 1}/{len(all_tickers)})")
+                
+                phase2_elapsed = (datetime.now() - phase2_start).total_seconds()
+                
+                status_text.empty()
+                progress_bar.empty()
+                
+                st.success(
+                    f"✅ Phase 2 complete in {phase2_elapsed:.1f}s!\n\n"
+                    f"MACD Success: {macd_success} | Failed: {macd_failed}"
+                )
+                
+                # Reload with MACD stages
+                st.cache_data.clear()
+                st.rerun()
+        else:
+            st.error("No data after Phase 1. Please check your data source.")
             st.stop()
     else:
-        st.error("Failed to calculate indicators. Please check your data source and try again.")
+        st.error("Phase 1 failed. Please check your data source.")
         st.stop()
+    
+    # Don't continue to breadth calculation yet if MACD stages not calculated
+    # User needs to click button to proceed
 
 # Calculate breadth
 breadth = calculate_market_breadth(df_indicators)
