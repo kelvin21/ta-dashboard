@@ -40,9 +40,6 @@ except ImportError as e:
     st.error(f"Failed to import utility modules: {e}")
     st.stop()
 
-# Page config
-st.set_page_config(page_title="Stock Leaders Detection", layout="wide", page_icon="🎯")
-
 # Load Material CSS
 css_path = SCRIPT_DIR / "styles" / "material.css"
 if css_path.exists():
