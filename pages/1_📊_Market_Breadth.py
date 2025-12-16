@@ -37,7 +37,7 @@ try:
     from utils.macd_stage import (
         detect_macd_stage, categorize_macd_stage, get_all_macd_stages,
         get_macd_stage_color, get_macd_stage_display_name,
-        categorize_macd_stage_vectorized
+        categorize_macd_stage_vectorized, detect_macd_stage_vectorized
     )
     from utils.db_async import get_sync_db_adapter
     USE_UTILS = True
@@ -126,14 +126,9 @@ def calculate_indicators_for_ticker(ticker: str, start_date: datetime, end_date:
         # Calculate indicators on full dataset (including warmup)
         df = calculate_all_indicators(df)
         
-        # Calculate MACD stage for each row
+        # Calculate MACD stage for each row (vectorized - much faster!)
         if 'macd_hist' in df.columns:
-            stages = []
-            for i in range(len(df)):
-                hist_slice = df['macd_hist'].iloc[:i+1]
-                stage = detect_macd_stage(hist_slice, lookback=20)
-                stages.append(stage)
-            df['macd_stage'] = stages
+            df['macd_stage'] = detect_macd_stage_vectorized(df['macd_hist'], lookback=20)
         
         # Trim to original date range (remove warmup period)
         df = df[df['date'] >= start_date].copy()
@@ -167,14 +162,9 @@ async def calculate_indicators_for_ticker_async(
         # Calculate indicators on full dataset (including warmup)
         df = calculate_all_indicators(df)
         
-        # Calculate MACD stage for each row
+        # Calculate MACD stage for each row (vectorized - much faster!)
         if 'macd_hist' in df.columns:
-            stages = []
-            for i in range(len(df)):
-                hist_slice = df['macd_hist'].iloc[:i+1]
-                stage = detect_macd_stage(hist_slice, lookback=20)
-                stages.append(stage)
-            df['macd_stage'] = stages
+            df['macd_stage'] = detect_macd_stage_vectorized(df['macd_hist'], lookback=20)
         
         # Trim to original date range (remove warmup period)
         df = df[df['date'] >= start_date].copy()
@@ -998,8 +988,10 @@ if df_indicators.empty:
     failed_count = 0
     
     start_time = datetime.now()
+    ticker_times = []
     
     for idx, ticker in enumerate(all_tickers):
+        ticker_start = datetime.now()
         status_text.text(f"Processing {ticker} ({idx + 1}/{len(all_tickers)})...")
         
         try:
@@ -1020,7 +1012,17 @@ if df_indicators.empty:
             failed_count += 1
             status_text.text(f"⚠️ Error processing {ticker}: {e}")
         
+        ticker_elapsed = (datetime.now() - ticker_start).total_seconds()
+        ticker_times.append(ticker_elapsed)
+        avg_time = sum(ticker_times) / len(ticker_times)
+        remaining = (len(all_tickers) - idx - 1) * avg_time
+        
         progress_bar.progress((idx + 1) / len(all_tickers))
+        status_text.text(
+            f"Processed {ticker} in {ticker_elapsed:.1f}s | "
+            f"Avg: {avg_time:.1f}s/ticker | "
+            f"ETA: {remaining:.0f}s"
+        )
     
     elapsed = (datetime.now() - start_time).total_seconds()
     

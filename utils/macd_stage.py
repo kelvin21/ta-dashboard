@@ -6,6 +6,79 @@ import pandas as pd
 import numpy as np
 
 
+def detect_macd_stage_vectorized(hist: pd.Series, lookback: int = 20) -> pd.Series:
+    """
+    Vectorized version: Detect MACD histogram stages for entire series.
+    Much faster than calling detect_macd_stage in a loop.
+    
+    Args:
+        hist: MACD histogram series
+        lookback: Number of bars to look back for peak/trough detection
+    
+    Returns:
+        Series of stage strings for each bar
+    """
+    if hist.empty or len(hist) < 3:
+        return pd.Series(['N/A'] * len(hist), index=hist.index)
+    
+    stages = []
+    hist_values = hist.fillna(method='ffill').fillna(0).values
+    
+    for i in range(len(hist_values)):
+        if i < 2:
+            stages.append('N/A')
+            continue
+        
+        last = hist_values[i]
+        prev = hist_values[i-1]
+        
+        # Check for zero crossings
+        if prev < 0 and last >= 0:
+            stages.append('2. Confirmed Trough')
+            continue
+        if prev > 0 and last <= 0:
+            stages.append('5. Confirmed Peak')
+            continue
+        
+        # Find last crossing point (vectorized search backwards)
+        start_search = max(0, i - lookback - 1)
+        window_slice = hist_values[start_search:i]
+        
+        last_cross_idx = start_search
+        for j in range(len(window_slice)-1, 0, -1):
+            idx = start_search + j
+            if (hist_values[idx] < 0 and hist_values[idx+1] >= 0) or \
+               (hist_values[idx] > 0 and hist_values[idx+1] <= 0):
+                last_cross_idx = idx + 1
+                break
+        
+        window_start = last_cross_idx
+        window = hist_values[window_start:i+1]
+        
+        if last < 0:
+            # Below zero: check for troughing or falling
+            if len(window) >= 3:
+                min_idx = np.argmin(window)
+                if min_idx < len(window) - 1:
+                    stages.append('1. Troughing')
+                else:
+                    stages.append('6. Falling below Zero')
+            else:
+                stages.append('6. Falling below Zero')
+        else:
+            # Above zero: check for peaking or rising
+            if len(window) >= 3:
+                max_idx = np.argmax(window)
+                if max_idx < len(window) - 1:
+                    stages.append('4. Peaking')
+                else:
+                    stages.append('3. Rising above Zero')
+            else:
+                stages.append('3. Rising above Zero')
+    
+    return pd.Series(stages, index=hist.index)
+
+
 def detect_macd_stage(hist: pd.Series, lookback: int = 20) -> str:
     """
     Detect MACD histogram stage for the latest bar.
