@@ -543,6 +543,31 @@ with col5:
 with col6:
     st.metric("📊 Total Analyzed", total_analyzed, delta=None)
 
+# Crossover Summary
+bearish_cross_count = sum(1 for r in results if r.get('rs_crossover_signal') == 'Bearish Cross')
+near_bearish_count = sum(1 for r in results if r.get('rs_crossover_signal') == 'Near Bearish')
+
+summary_parts = []
+if crossover_count > 0:
+    summary_parts.append(f"**{crossover_count}** stocks just crossed above RS MA20 🚀")
+if near_crossover_count > 0:
+    summary_parts.append(f"**{near_crossover_count}** stocks are near bullish crossing 📈")
+if bearish_cross_count > 0:
+    summary_parts.append(f"**{bearish_cross_count}** stocks just crossed below RS MA20 📉")
+if near_bearish_count > 0:
+    summary_parts.append(f"**{near_bearish_count}** stocks are near bearish crossing ⚠️")
+
+if summary_parts:
+    summary_text = "**RS Crossover Activity:** " + ", ".join(summary_parts) + "."
+    st.markdown(f"""
+    <div class="material-card" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); 
+                 padding: 16px; border-radius: 8px; margin: 16px 0;">
+        <div style="color: white; font-size: 15px;">
+            <i class="fas fa-chart-line"></i> {summary_text}
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+
 st.markdown("---")
 
 # Create tabs for Outperforming vs Underperforming
