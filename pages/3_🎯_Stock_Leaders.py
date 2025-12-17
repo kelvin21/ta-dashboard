@@ -301,9 +301,9 @@ with st.sidebar:
     st.markdown("### <i class='fas fa-globe'></i> Universe Selection", unsafe_allow_html=True)
     universe = st.radio(
         "Select Universe",
-        options=["VN30", "HOSE", "All"],
+        options=["All", "VN30", "HOSE"],
         index=0,
-        help="VN30 recommended for focused leaders"
+        help="Analyze all stocks by default"
     )
     
     st.markdown("---")
@@ -315,9 +315,9 @@ with st.sidebar:
         "Minimum RS Percentile",
         min_value=0,
         max_value=100,
-        value=70,
+        value=0,
         step=5,
-        help="Higher RS = outperforming VNINDEX"
+        help="0 = show all stocks, higher values filter for stronger RS"
     )
     
     # Crossover filter
@@ -559,10 +559,10 @@ with tab1:
         st.markdown(f"### Top {len(outperforming_filtered[:50])} Market Leaders")
         st.caption("Sorted by RS percentile - stocks with strongest relative performance")
         st.markdown("")
-    
-    # Create results table
-    for idx, result in enumerate(filtered_results[:50], start=1):  # Limit to top 50
-        badge_class = f"chip-{result['badge_color']}"
+        
+        # Display outperforming stocks
+        for idx, result in enumerate(outperforming_filtered[:50], start=1):  # Limit to top 50
+            badge_class = f"chip-{result['badge_color']}"
         
         # Add crossover indicator to title
         crossover_indicator = ""
