@@ -543,27 +543,36 @@ with col5:
 with col6:
     st.metric("📊 Total Analyzed", total_analyzed, delta=None)
 
-# Crossover Summary
-bearish_cross_count = sum(1 for r in results if r.get('rs_crossover_signal') == 'Bearish Cross')
-near_bearish_count = sum(1 for r in results if r.get('rs_crossover_signal') == 'Near Bearish')
+# Crossover Summary with Ticker Names
+bullish_cross_tickers = [r['ticker'] for r in results if r.get('rs_crossover_signal') == 'Bullish Cross']
+near_bullish_tickers = [r['ticker'] for r in results if r.get('rs_crossover_signal') == 'Near Bullish']
+bearish_cross_tickers = [r['ticker'] for r in results if r.get('rs_crossover_signal') == 'Bearish Cross']
+near_bearish_tickers = [r['ticker'] for r in results if r.get('rs_crossover_signal') == 'Near Bearish']
 
 summary_parts = []
-if crossover_count > 0:
-    summary_parts.append(f"**{crossover_count}** stocks just crossed above RS MA20 🚀")
-if near_crossover_count > 0:
-    summary_parts.append(f"**{near_crossover_count}** stocks are near bullish crossing 📈")
-if bearish_cross_count > 0:
-    summary_parts.append(f"**{bearish_cross_count}** stocks just crossed below RS MA20 📉")
-if near_bearish_count > 0:
-    summary_parts.append(f"**{near_bearish_count}** stocks are near bearish crossing ⚠️")
+if bullish_cross_tickers:
+    tickers_str = ", ".join(bullish_cross_tickers)
+    summary_parts.append(f"**{len(bullish_cross_tickers)}** stocks just crossed above RS MA20 🚀: {tickers_str}")
+if near_bullish_tickers:
+    tickers_str = ", ".join(near_bullish_tickers)
+    summary_parts.append(f"**{len(near_bullish_tickers)}** stocks are near bullish crossing 📈: {tickers_str}")
+if bearish_cross_tickers:
+    tickers_str = ", ".join(bearish_cross_tickers)
+    summary_parts.append(f"**{len(bearish_cross_tickers)}** stocks just crossed below RS MA20 📉: {tickers_str}")
+if near_bearish_tickers:
+    tickers_str = ", ".join(near_bearish_tickers)
+    summary_parts.append(f"**{len(near_bearish_tickers)}** stocks are near bearish crossing ⚠️: {tickers_str}")
 
 if summary_parts:
-    summary_text = "**RS Crossover Activity:** " + ", ".join(summary_parts) + "."
+    summary_text = "<br/>".join(summary_parts)
     st.markdown(f"""
     <div class="material-card" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); 
                  padding: 16px; border-radius: 8px; margin: 16px 0;">
-        <div style="color: white; font-size: 15px;">
-            <i class="fas fa-chart-line"></i> {summary_text}
+        <div style="color: white; font-size: 15px; line-height: 1.8;">
+            <div style="font-weight: bold; margin-bottom: 8px;">
+                <i class="fas fa-chart-line"></i> RS Crossover Activity:
+            </div>
+            {summary_text}
         </div>
     </div>
     """, unsafe_allow_html=True)
