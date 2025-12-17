@@ -49,15 +49,55 @@ except ImportError as e:
     st.error(f"Failed to import utility modules: {e}")
     st.stop()
 
-# Load Material CSS
-css_path = SCRIPT_DIR / "styles" / "material.css"
-if css_path.exists():
-    with open(css_path) as f:
-        st.markdown(f"<style>{f.read()}</style>", unsafe_allow_html=True)
-
 # Title
-st.markdown("# 🎯 Outperforming Stock Detection")
-st.markdown("Daily prediction list based on **Relative Strength vs VNINDEX**")
+st.markdown("""
+<div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 32px; border-radius: 12px; margin-bottom: 24px; box-shadow: 0 10px 20px rgba(0,0,0,0.19);">
+    <h1 style="color: white; margin: 0; font-size: 42px;"><i class="fas fa-chart-line"></i> Stock Leaders Detection</h1>
+    <p style="color: rgba(255,255,255,0.9); margin: 8px 0 0 0; font-size: 18px;">
+        Identify stocks outperforming or underperforming VNINDEX using Relative Strength analysis
+    </p>
+</div>
+""", unsafe_allow_html=True)
+
+# Summary/Introduction Section
+st.markdown("""
+<div class="material-card elevation-2" style="margin-bottom: 24px; padding: 20px;">
+    <h3 style="margin-top: 0; color: #1976D2;"><i class="fas fa-info-circle"></i> What is Relative Strength (RS)?</h3>
+    <p style="line-height: 1.6; color: #424242;">
+        <strong>Relative Strength</strong> measures how a stock performs compared to the market index (VNINDEX). 
+        A rising RS line means the stock is <strong>outperforming</strong> the market, while a falling RS indicates <strong>underperformance</strong>.
+    </p>
+    
+    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 16px; margin-top: 16px;">
+        <div style="background: #E8F5E9; padding: 16px; border-radius: 8px; border-left: 4px solid #4CAF50;">
+            <div style="font-size: 16px; font-weight: bold; color: #2E7D32; margin-bottom: 8px;">
+                <i class="fas fa-rocket"></i> Outperforming Leaders
+            </div>
+            <div style="font-size: 14px; color: #424242;">
+                Stocks with high RS percentile (top 20-30%) are <strong>market leaders</strong>. 
+                Look for RS crossing above MA20 as entry signals, but avoid overextended stocks.
+            </div>
+        </div>
+        
+        <div style="background: #FFEBEE; padding: 16px; border-radius: 8px; border-left: 4px solid #F44336;">
+            <div style="font-size: 16px; font-weight: bold; color: #C62828; margin-bottom: 8px;">
+                <i class="fas fa-arrow-down"></i> Underperforming Laggards
+            </div>
+            <div style="font-size: 14px; color: #424242;">
+                Stocks with low RS percentile (bottom 30%) are <strong>lagging</strong> the market. 
+                Consider reducing exposure or looking for mean reversion opportunities.
+            </div>
+        </div>
+    </div>
+    
+    <div style="margin-top: 16px; padding: 12px; background: #FFF3E0; border-radius: 8px; border-left: 4px solid #FF9800;">
+        <div style="font-size: 14px; color: #E65100;">
+            <i class="fas fa-lightbulb"></i> <strong>Key Insight:</strong> 
+            Strong stocks become stronger, weak stocks become weaker. Focus on relative strength, not just price.
+        </div>
+    </div>
+</div>
+""", unsafe_allow_html=True)
 
 # =====================================================================
 # HELPER FUNCTIONS
@@ -237,7 +277,7 @@ def analyze_stock_leadership(ticker: str, analysis_date: datetime, vnindex_data:
 # =====================================================================
 
 with st.sidebar:
-    st.header("📅 Analysis Settings")
+    st.markdown("### <i class='far fa-calendar'></i> Analysis Settings", unsafe_allow_html=True)
     
     # Get latest date
     latest_date = get_latest_date_from_db()
@@ -258,14 +298,17 @@ with st.sidebar:
     
     st.markdown("---")
     
-    # Universe selection
-    st.subheader("🌍 Universe Selection")
+    st.markdown("### <i class='fas fa-globe'></i> Universe Selection", unsafe_allow_html=True)
     universe = st.radio(
         "Select Universe",
         options=["VN30", "HOSE", "All"],
         index=0,
         help="VN30 recommended for focused leaders"
     )
+    
+    st.markdown("---")
+    
+    st.markdown("### <i class='fas fa-filter'></i> Filters", unsafe_allow_html=True)
     
     # RS Percentile filter
     min_percentile = st.slider(
@@ -277,12 +320,9 @@ with st.sidebar:
         help="Higher RS = outperforming VNINDEX"
     )
     
-    st.markdown("---")
-    
     # Crossover filter
-    st.subheader("🎯 RS Crossover Filter")
     filter_crossover = st.selectbox(
-        "Show Only",
+        "RS Crossover Filter",
         options=["All Stocks", "RS Crossovers Only", "Near Crossover", "Above MA20"],
         index=0,
         help="Filter by RS vs MA20 status"
@@ -297,8 +337,7 @@ with st.sidebar:
     
     st.markdown("---")
     
-    # Display options
-    st.subheader("📊 Display Options")
+    st.markdown("### <i class='fas fa-cog'></i> Display Options", unsafe_allow_html=True)
     
     show_rsi = st.checkbox("Show RSI (Optional)", value=True)
     show_obv = st.checkbox("Show OBV (Optional)", value=False)
@@ -308,7 +347,7 @@ with st.sidebar:
     st.markdown("---")
     
     # Refresh button
-    if st.button("🔄 Refresh Data"):
+    if st.button("🔄 Refresh Data", type="primary"):
         st.cache_data.clear()
         st.rerun()
 
@@ -430,75 +469,96 @@ for result in results:
         result['list_class'] = 'List A'
         result['badge_color'] = 'green'
         result['description'] = 'Top 20% RS - Strong Leader'
+        result['performance_type'] = 'outperforming'
     elif result['rs_percentile'] >= 70:
         result['list_class'] = 'List B'
         result['badge_color'] = 'blue'
         result['description'] = 'Top 30% RS - Watchlist'
+        result['performance_type'] = 'outperforming'
+    elif result['rs_percentile'] <= 30:
+        result['list_class'] = 'Laggard'
+        result['badge_color'] = 'red'
+        result['description'] = 'Bottom 30% RS - Underperforming'
+        result['performance_type'] = 'underperforming'
     else:
         result['list_class'] = 'List C'
         result['badge_color'] = 'gray'
-        result['description'] = 'Below 70% RS - Monitor'
+        result['description'] = 'Middle Range RS'
+        result['performance_type'] = 'neutral'
+
+# Split into outperforming and underperforming
+outperforming_results = [r for r in results if r['performance_type'] == 'outperforming']
+underperforming_results = [r for r in results if r['performance_type'] == 'underperforming']
 
 # Filter by minimum RS percentile
-filtered_results = [r for r in results if r['rs_percentile'] >= min_percentile]
+outperforming_filtered = [r for r in outperforming_results if r['rs_percentile'] >= min_percentile]
+underperforming_filtered = [r for r in underperforming_results if r['rs_percentile'] <= (100 - min_percentile)]
 
-# Apply crossover filter
+# Apply crossover filter to outperforming
 if filter_crossover == "RS Crossovers Only":
-    filtered_results = [r for r in filtered_results if r.get('rs_crossover_signal') == 'Bullish Cross']
+    outperforming_filtered = [r for r in outperforming_filtered if r.get('rs_crossover_signal') == 'Bullish Cross']
 elif filter_crossover == "Near Crossover":
-    filtered_results = [r for r in filtered_results if r.get('rs_crossover_signal') in ['Bullish Cross', 'Near Bullish']]
+    outperforming_filtered = [r for r in outperforming_filtered if r.get('rs_crossover_signal') in ['Bullish Cross', 'Near Bullish']]
 elif filter_crossover == "Above MA20":
-    filtered_results = [r for r in filtered_results if 'Above MA20' in r.get('rs_crossover_status', '')]
+    outperforming_filtered = [r for r in outperforming_filtered if 'Above MA20' in r.get('rs_crossover_status', '')]
 
 # Apply distribution filter
 if hide_overextended:
-    filtered_results = [r for r in filtered_results if not r.get('distribution_warning', False)]
-elif filter_crossover == "Above MA20":
-    filtered_results = [r for r in filtered_results if 'Above MA20' in r.get('rs_crossover_status', '')]
+    outperforming_filtered = [r for r in outperforming_filtered if not r.get('distribution_warning', False)]
 
 # Sort by score (prioritizes recent crossovers due to bonus)
-filtered_results.sort(key=lambda x: x['score'], reverse=True)
+outperforming_filtered.sort(key=lambda x: x['score'], reverse=True)
+underperforming_filtered.sort(key=lambda x: x['score'], reverse=False)  # Lowest RS first
 
 st.markdown("---")
 
 # Summary Statistics
-st.markdown("## 📊 Prediction List Summary")
+st.markdown("## 📊 Market RS Distribution")
 
 col1, col2, col3, col4, col5, col6 = st.columns(6)
 
-list_a_count = sum(1 for r in filtered_results if r['list_class'] == 'List A')
-list_b_count = sum(1 for r in filtered_results if r['list_class'] == 'List B')
-crossover_count = sum(1 for r in filtered_results if r.get('rs_crossover_signal') == 'Bullish Cross')
-near_crossover_count = sum(1 for r in filtered_results if r.get('rs_crossover_signal') == 'Near Bullish')
+list_a_count = sum(1 for r in outperforming_results if r['list_class'] == 'List A')
+list_b_count = sum(1 for r in outperforming_results if r['list_class'] == 'List B')
+laggard_count = len(underperforming_results)
+crossover_count = sum(1 for r in outperforming_filtered if r.get('rs_crossover_signal') == 'Bullish Cross')
+near_crossover_count = sum(1 for r in outperforming_filtered if r.get('rs_crossover_signal') == 'Near Bullish')
 distribution_count = sum(1 for r in results if r.get('distribution_warning', False))
 total_analyzed = len(results)
 
 with col1:
-    st.metric("List A (High Conviction)", list_a_count, delta=None)
+    st.metric("🚀 List A (Top 20%)", list_a_count, delta=None)
 
 with col2:
-    st.metric("List B (Watchlist)", list_b_count, delta=None)
+    st.metric("📈 List B (Top 30%)", list_b_count, delta=None)
 
 with col3:
-    st.metric("🚀 RS Crossovers", crossover_count, delta=None, help="Just crossed above MA20")
+    st.metric("⚡ RS Crossovers", crossover_count, delta=None, help="Just crossed above MA20")
 
 with col4:
-    st.metric("📈 Near Cross", near_crossover_count, delta=None, help="About to cross MA20")
+    st.metric("📉 Laggards (Bottom 30%)", laggard_count, delta=None)
 
 with col5:
     st.metric("⚠️ Overextended", distribution_count, delta=None, help="RS RSI >70 or >10% above MA20")
 
 with col6:
-    st.metric("Total Analyzed", total_analyzed, delta=None)
+    st.metric("📊 Total Analyzed", total_analyzed, delta=None)
 
 st.markdown("---")
 
-# Display prediction lists
-if not filtered_results:
-    st.info(f"No stocks meet the minimum RS percentile threshold of {min_percentile}%.")
-else:
-    st.markdown("## 🎯 Daily Prediction List")
-    st.caption(f"Showing {len(filtered_results)} stocks ranked by RS percentile")
+# Create tabs for Outperforming vs Underperforming
+tab1, tab2 = st.tabs([
+    f"🚀 Outperforming Leaders ({len(outperforming_filtered)})",
+    f"📉 Underperforming Laggards ({len(underperforming_filtered)})"
+])
+
+# TAB 1: OUTPERFORMING
+with tab1:
+    if not outperforming_filtered:
+        st.info(f"No outperforming stocks meet the criteria.")
+    else:
+        st.markdown(f"### Top {len(outperforming_filtered[:50])} Market Leaders")
+        st.caption("Sorted by RS percentile - stocks with strongest relative performance")
+        st.markdown("")
     
     # Create results table
     for idx, result in enumerate(filtered_results[:50], start=1):  # Limit to top 50
@@ -514,79 +574,161 @@ else:
             crossover_indicator = " ⚠️"
         
         # Create expandable card
-        with st.expander(f"#{idx} | {result['ticker']}{crossover_indicator} | RS: {result['rs_percentile']:.1f}% | {result['list_class']}", expanded=(idx <= 3)):
-            col1, col2 = st.columns(2)
+        for idx, result in enumerate(outperforming_filtered[:50], start=1):  # Limit to top 50
+            badge_class = f"chip-{result['badge_color']}"
             
-            with col1:
-                st.markdown(f"**Price:** {result['close']:.2f}")
-                st.markdown(f"**RS Percentile:** {result['rs_percentile']:.1f}%")
-                st.markdown(f"**RS Value:** {result['rs_current']:.2f}")
-                if show_rs_ma20 and not np.isnan(result.get('rs_ma20', np.nan)):
-                    st.markdown(f"**RS MA20:** {result['rs_ma20']:.2f}")
-                if show_rs_indicators:
-                    if not np.isnan(result.get('rs_rsi', np.nan)):
-                        rs_rsi_color = '🔴' if result['rs_rsi'] > 70 else '🟢' if result['rs_rsi'] < 30 else '🟡'
-                        st.markdown(f"**RS RSI:** {rs_rsi_color} {result['rs_rsi']:.1f}")
-                    if not np.isnan(result.get('rs_distance_pct', np.nan)):
-                        st.markdown(f"**RS vs MA20:** {result['rs_distance_pct']:+.1f}%")
-                st.markdown(f"**Classification:** `{result['list_class']}`")
+            # Add crossover indicator to title
+            crossover_indicator = ""
+            if result.get('rs_crossover_signal') == 'Bullish Cross':
+                crossover_indicator = " 🚀"
+            elif result.get('rs_crossover_signal') == 'Near Bullish':
+                crossover_indicator = " 📈"
+            elif result.get('distribution_warning', False):
+                crossover_indicator = " ⚠️"
+            
+            with st.expander(f"#{idx} | {result['ticker']}{crossover_indicator} | RS: {result['rs_percentile']:.1f}% | {result['list_class']}", expanded=(idx <= 3)):
+                col1, col2 = st.columns(2)
                 
-            with col2:
-                st.markdown(f"**Description:** {result['description']}")
-                
-                # Distribution warning
-                if result.get('distribution_warning', False):
-                    st.error(f"⚠️ **Overextended:** {result['distribution_reason']}")
-                
-                # Highlight crossover status
-                crossover_status = result.get('rs_crossover_status', 'None')
-                if '🚀' in crossover_status or '📈' in crossover_status:
-                    st.success(f"**RS Status:** {crossover_status}")
-                elif '⚠️' in crossover_status:
-                    st.warning(f"**RS Status:** {crossover_status}")
-                else:
-                    st.markdown(f"**RS Status:** {crossover_status}")
+                with col1:
+                    st.markdown(f"**Price:** {result['close']:.2f}")
+                    st.markdown(f"**RS Percentile:** {result['rs_percentile']:.1f}%")
+                    st.markdown(f"**RS Value:** {result['rs_current']:.2f}")
+                    if show_rs_ma20 and not np.isnan(result.get('rs_ma20', np.nan)):
+                        st.markdown(f"**RS MA20:** {result['rs_ma20']:.2f}")
+                    if show_rs_indicators:
+                        if not np.isnan(result.get('rs_rsi', np.nan)):
+                            rs_rsi_color = '🔴' if result['rs_rsi'] > 70 else '🟢' if result['rs_rsi'] < 30 else '🟡'
+                            st.markdown(f"**RS RSI:** {rs_rsi_color} {result['rs_rsi']:.1f}")
+                        if not np.isnan(result.get('rs_distance_pct', np.nan)):
+                            st.markdown(f"**RS vs MA20:** {result['rs_distance_pct']:+.1f}%")
+                    st.markdown(f"**Classification:** `{result['list_class']}`")
                     
-                if show_rsi and not np.isnan(result['rsi_daily']):
-                    st.markdown(f"**RSI (Daily):** {result['rsi_daily']:.1f}")
-                if show_obv and result['obv_status'] != 'N/A':
-                    st.markdown(f"**OBV Status:** {result['obv_status']}")
+                with col2:
+                    st.markdown(f"**Description:** {result['description']}")
+                    
+                    # Distribution warning
+                    if result.get('distribution_warning', False):
+                        st.error(f"⚠️ **Overextended:** {result['distribution_reason']}")
+                    
+                    # Highlight crossover status
+                    crossover_status = result.get('rs_crossover_status', 'None')
+                    if '🚀' in crossover_status or '📈' in crossover_status:
+                        st.success(f"**RS Status:** {crossover_status}")
+                    elif '⚠️' in crossover_status:
+                        st.warning(f"**RS Status:** {crossover_status}")
+                    else:
+                        st.markdown(f"**RS Status:** {crossover_status}")
+                        
+                    if show_rsi and not np.isnan(result['rsi_daily']):
+                        st.markdown(f"**RSI (Daily):** {result['rsi_daily']:.1f}")
+                    if show_obv and result['obv_status'] != 'N/A':
+                        st.markdown(f"**OBV Status:** {result['obv_status']}")
+
+# TAB 2: UNDERPERFORMING
+with tab2:
+    if not underperforming_filtered:
+        st.info(f"No underperforming stocks found.")
+    else:
+        st.markdown(f"### Bottom {len(underperforming_filtered[:50])} Market Laggards")
+        st.caption("Sorted by RS percentile (lowest first) - stocks with weakest relative performance")
+        st.markdown("")
+        
+        # Display underperforming stocks
+        for idx, result in enumerate(underperforming_filtered[:50], start=1):
+            with st.expander(f"#{idx} | {result['ticker']} | RS: {result['rs_percentile']:.1f}% | {result['list_class']}", expanded=(idx <= 3)):
+                col1, col2 = st.columns(2)
+                
+                with col1:
+                    st.markdown(f"**Price:** {result['close']:.2f}")
+                    st.markdown(f"**RS Percentile:** {result['rs_percentile']:.1f}%")
+                    st.markdown(f"**RS Value:** {result['rs_current']:.2f}")
+                    if show_rs_ma20 and not np.isnan(result.get('rs_ma20', np.nan)):
+                        st.markdown(f"**RS MA20:** {result['rs_ma20']:.2f}")
+                    if show_rs_indicators:
+                        if not np.isnan(result.get('rs_rsi', np.nan)):
+                            rs_rsi_color = '🔴' if result['rs_rsi'] > 70 else '🟢' if result['rs_rsi'] < 30 else '🟡'
+                            st.markdown(f"**RS RSI:** {rs_rsi_color} {result['rs_rsi']:.1f}")
+                        if not np.isnan(result.get('rs_distance_pct', np.nan)):
+                            st.markdown(f"**RS vs MA20:** {result['rs_distance_pct']:+.1f}%")
+                    st.markdown(f"**Classification:** `{result['list_class']}`")
+                    
+                with col2:
+                    st.markdown(f"**Description:** {result['description']}")
+                    st.warning("⚠️ **Weak RS:** Underperforming the market")
+                    
+                    # RS status
+                    crossover_status = result.get('rs_crossover_status', 'None')
+                    st.markdown(f"**RS Status:** {crossover_status}")
+                        
+                    if show_rsi and not np.isnan(result['rsi_daily']):
+                        st.markdown(f"**RSI (Daily):** {result['rsi_daily']:.1f}")
+                    if show_obv and result['obv_status'] != 'N/A':
+                        st.markdown(f"**OBV Status:** {result['obv_status']}")
 
 st.markdown("---")
 
 # Export functionality
 st.markdown("## 💾 Export Results")
 
-if filtered_results:
-    # Create DataFrame for export
-    export_df = pd.DataFrame([
-        {
-            'Rank': idx + 1,
-            'Ticker': r['ticker'],
-            'RS Percentile': f"{r['rs_percentile']:.1f}",
-            'RS Value': f"{r['rs_current']:.2f}",
-            'RS MA20': f"{r.get('rs_ma20', 0):.2f}" if not np.isnan(r.get('rs_ma20', np.nan)) else 'N/A',
-            'RS RSI': f"{r.get('rs_rsi', 0):.1f}" if not np.isnan(r.get('rs_rsi', np.nan)) else 'N/A',
-            'RS Distance %': f"{r.get('rs_distance_pct', 0):+.1f}" if not np.isnan(r.get('rs_distance_pct', np.nan)) else 'N/A',
-            'RS Status': r.get('rs_crossover_status', 'None'),
-            'Crossover Signal': r.get('rs_crossover_signal', 'None'),
-            'Distribution Warning': 'Yes' if r.get('distribution_warning', False) else 'No',
-            'Distribution Reason': r.get('distribution_reason', 'None'),
-            'List': r['list_class'],
-            'Price': f"{r['close']:.2f}",
-            'RSI': f"{r['rsi_daily']:.1f}" if not np.isnan(r['rsi_daily']) else 'N/A',
-            'OBV Status': r['obv_status']
-        }
-        for idx, r in enumerate(filtered_results[:50])
-    ])
-    
-    csv = export_df.to_csv(index=False)
-    st.download_button(
-        label="📥 Download Prediction List (CSV)",
-        data=csv,
-        file_name=f"stock_leaders_{selected_date.strftime('%Y%m%d')}.csv",
-        mime="text/csv"
-    )
+col1, col2 = st.columns(2)
+
+with col1:
+    if outperforming_filtered:
+        # Create DataFrame for export
+        export_df_out = pd.DataFrame([
+            {
+                'Rank': idx + 1,
+                'Ticker': r['ticker'],
+                'RS Percentile': f"{r['rs_percentile']:.1f}",
+                'RS Value': f"{r['rs_current']:.2f}",
+                'RS MA20': f"{r.get('rs_ma20', 0):.2f}" if not np.isnan(r.get('rs_ma20', np.nan)) else 'N/A',
+                'RS RSI': f"{r.get('rs_rsi', 0):.1f}" if not np.isnan(r.get('rs_rsi', np.nan)) else 'N/A',
+                'RS Distance %': f"{r.get('rs_distance_pct', 0):+.1f}" if not np.isnan(r.get('rs_distance_pct', np.nan)) else 'N/A',
+                'RS Status': r.get('rs_crossover_status', 'None'),
+                'Crossover Signal': r.get('rs_crossover_signal', 'None'),
+                'Distribution Warning': 'Yes' if r.get('distribution_warning', False) else 'No',
+                'Distribution Reason': r.get('distribution_reason', 'None'),
+                'List': r['list_class'],
+                'Price': f"{r['close']:.2f}",
+                'RSI': f"{r['rsi_daily']:.1f}" if not np.isnan(r['rsi_daily']) else 'N/A',
+                'OBV Status': r['obv_status']
+            }
+            for idx, r in enumerate(outperforming_filtered[:50])
+        ])
+        
+        csv = export_df_out.to_csv(index=False)
+        st.download_button(
+            label="📥 Download Outperforming Leaders (CSV)",
+            data=csv,
+            file_name=f"outperforming_leaders_{selected_date.strftime('%Y%m%d')}.csv",
+            mime="text/csv"
+        )
+
+with col2:
+    if underperforming_filtered:
+        # Create DataFrame for export
+        export_df_under = pd.DataFrame([
+            {
+                'Rank': idx + 1,
+                'Ticker': r['ticker'],
+                'RS Percentile': f"{r['rs_percentile']:.1f}",
+                'RS Value': f"{r['rs_current']:.2f}",
+                'RS MA20': f"{r.get('rs_ma20', 0):.2f}" if not np.isnan(r.get('rs_ma20', np.nan)) else 'N/A',
+                'RS RSI': f"{r.get('rs_rsi', 0):.1f}" if not np.isnan(r.get('rs_rsi', np.nan)) else 'N/A',
+                'List': r['list_class'],
+                'Price': f"{r['close']:.2f}",
+                'RSI': f"{r['rsi_daily']:.1f}" if not np.isnan(r['rsi_daily']) else 'N/A',
+            }
+            for idx, r in enumerate(underperforming_filtered[:50])
+        ])
+        
+        csv = export_df_under.to_csv(index=False)
+        st.download_button(
+            label="📥 Download Underperforming Laggards (CSV)",
+            data=csv,
+            file_name=f"underperforming_laggards_{selected_date.strftime('%Y%m%d')}.csv",
+            mime="text/csv"
+        )
 
 st.markdown("---")
 
