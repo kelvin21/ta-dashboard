@@ -60,44 +60,29 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # Summary/Introduction Section
-st.markdown("""
-<div class="material-card elevation-2" style="margin-bottom: 24px; padding: 20px;">
-    <h3 style="margin-top: 0; color: #1976D2;"><i class="fas fa-info-circle"></i> What is Relative Strength (RS)?</h3>
-    <p style="line-height: 1.6; color: #424242;">
-        <strong>Relative Strength</strong> measures how a stock performs compared to the market index (VNINDEX). 
-        A rising RS line means the stock is <strong>outperforming</strong> the market, while a falling RS indicates <strong>underperformance</strong>.
-    </p>
-    
-    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 16px; margin-top: 16px;">
-        <div style="background: #E8F5E9; padding: 16px; border-radius: 8px; border-left: 4px solid #4CAF50;">
-            <div style="font-size: 16px; font-weight: bold; color: #2E7D32; margin-bottom: 8px;">
-                <i class="fas fa-rocket"></i> Outperforming Leaders
-            </div>
-            <div style="font-size: 14px; color: #424242;">
-                Stocks with high RS percentile (top 20-30%) are <strong>market leaders</strong>. 
-                Look for RS crossing above MA20 as entry signals, but avoid overextended stocks.
-            </div>
-        </div>
-        
-        <div style="background: #FFEBEE; padding: 16px; border-radius: 8px; border-left: 4px solid #F44336;">
-            <div style="font-size: 16px; font-weight: bold; color: #C62828; margin-bottom: 8px;">
-                <i class="fas fa-arrow-down"></i> Underperforming Laggards
-            </div>
-            <div style="font-size: 14px; color: #424242;">
-                Stocks with low RS percentile (bottom 30%) are <strong>lagging</strong> the market. 
-                Consider reducing exposure or looking for mean reversion opportunities.
-            </div>
-        </div>
-    </div>
-    
-    <div style="margin-top: 16px; padding: 12px; background: #FFF3E0; border-radius: 8px; border-left: 4px solid #FF9800;">
-        <div style="font-size: 14px; color: #E65100;">
-            <i class="fas fa-lightbulb"></i> <strong>Key Insight:</strong> 
-            Strong stocks become stronger, weak stocks become weaker. Focus on relative strength, not just price.
-        </div>
-    </div>
-</div>
-""", unsafe_allow_html=True)
+st.markdown("### 📊 What is Relative Strength (RS)?")
+st.write("""
+**Relative Strength** measures how a stock performs compared to the market index (VNINDEX). 
+A rising RS line means the stock is **outperforming** the market, while a falling RS indicates **underperformance**.
+""")
+
+col_intro1, col_intro2 = st.columns(2)
+
+with col_intro1:
+    st.success("**🚀 Outperforming Leaders**")
+    st.write("""
+    Stocks with high RS percentile (top 20-30%) are **market leaders**. 
+    Look for RS crossing above MA20 as entry signals, but avoid overextended stocks.
+    """)
+
+with col_intro2:
+    st.error("**📉 Underperforming Laggards**")
+    st.write("""
+    Stocks with low RS percentile (bottom 30%) are **lagging** the market. 
+    Consider reducing exposure or looking for mean reversion opportunities.
+    """)
+
+st.warning("**💡 Key Insight:** Strong stocks become stronger, weak stocks become weaker. Focus on relative strength, not just price.")
 
 # =====================================================================
 # HELPER FUNCTIONS
