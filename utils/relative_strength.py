@@ -8,13 +8,18 @@ from datetime import datetime, timedelta
 from typing import Dict, List, Tuple, Optional
 
 
-def calculate_relative_strength(stock_close: pd.Series, vnindex_close: pd.Series) -> pd.Series:
+def calculate_relative_strength(stock_close: pd.Series, vnindex_close: pd.Series, method: str = 'price_ratio') -> pd.Series:
     """
-    Calculate Relative Strength ratio (Stock / VNINDEX).
+    Calculate Relative Strength using Comparative Relative Strength (CRS) formula.
+    
+    CRS = (Stock's % Change) / (Benchmark's % Change)
+    A value > 1 means the stock is outperforming the benchmark.
+    A value < 1 means it's underperforming.
     
     Args:
         stock_close: Stock closing prices
         vnindex_close: VNINDEX closing prices (aligned dates)
+        method: 'percentage' for CRS formula (recommended), 'price_ratio' for legacy
     
     Returns:
         Series of RS values
@@ -25,10 +30,27 @@ def calculate_relative_strength(stock_close: pd.Series, vnindex_close: pd.Series
         'vnindex': vnindex_close
     }).dropna()
     
-    if aligned.empty or (aligned['vnindex'] == 0).any():
+    if aligned.empty:
         return pd.Series([np.nan] * len(stock_close), index=stock_close.index)
     
-    rs = aligned['stock'] / aligned['vnindex']
+    if method == 'percentage':
+        # Comparative Relative Strength (CRS) - Correct formula
+        # Calculate percentage change from first value
+        stock_pct_change = (aligned['stock'] / aligned['stock'].iloc[0]) - 1
+        vnindex_pct_change = (aligned['vnindex'] / aligned['vnindex'].iloc[0]) - 1
+        
+        # Handle division by zero
+        vnindex_pct_change = vnindex_pct_change.replace(0, np.nan)
+        
+        # CRS = Stock % Change / Benchmark % Change
+        # Convert to ratio format: (1 + stock_pct) / (1 + vnindex_pct)
+        rs = (1 + stock_pct_change) / (1 + vnindex_pct_change)
+    else:
+        # Legacy price ratio method (less accurate)
+        if (aligned['vnindex'] == 0).any():
+            return pd.Series([np.nan] * len(stock_close), index=stock_close.index)
+        rs = aligned['stock'] / aligned['vnindex']
+    
     return rs.reindex(stock_close.index)
 
 

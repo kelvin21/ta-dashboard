@@ -72,10 +72,16 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # Summary/Introduction Section
-st.markdown("### 📊 What is Relative Strength (RS)?")
+st.markdown("### 📊 What is Comparative Relative Strength (CRS)?")
 st.write("""
-**Relative Strength** measures how a stock performs compared to the market index (VNINDEX). 
-A rising RS line means the stock is **outperforming** the market, while a falling RS indicates **underperformance**.
+**Comparative Relative Strength (CRS)** measures how a stock performs compared to the market index (VNINDEX). 
+
+**Formula**: CRS = (Stock's % Change) / (Benchmark's % Change)
+
+- **CRS > 1.0**: Stock is **outperforming** the market
+- **CRS < 1.0**: Stock is **underperforming** the market
+
+This is NOT the same as RSI (Relative Strength Index).
 """)
 
 col_intro1, col_intro2 = st.columns(2)
@@ -152,8 +158,8 @@ def create_rs_chart(ticker: str, analysis_date: datetime, vnindex_data: pd.DataF
     if df.empty or len(df) < 20:
         return None
     
-    # Calculate RS and indicators
-    rs = calculate_relative_strength(df['close'], vnindex_data['close'])
+    # Calculate RS and indicators using CRS formula
+    rs = calculate_relative_strength(df['close'], vnindex_data['close'], method='percentage')
     if rs.empty or rs.isna().all():
         return None
     
@@ -286,8 +292,9 @@ def analyze_stock_leadership(ticker: str, analysis_date: datetime, vnindex_data:
     if df.empty or len(df) < 20:
         return None
     
-    # Calculate Relative Strength (PRIMARY METRIC)
-    rs = calculate_relative_strength(df['close'], vnindex_data['close'])
+    # Calculate Relative Strength using CRS formula (PRIMARY METRIC)
+    # CRS = (Stock % Change) / (Benchmark % Change)
+    rs = calculate_relative_strength(df['close'], vnindex_data['close'], method='percentage')
     if rs.empty or rs.isna().all():
         return None
     
@@ -1179,15 +1186,22 @@ st.markdown("""
 <div class="material-card elevation-2" style="padding: 1.5rem; margin-bottom: 1rem;">
 <h3>🎯 Relative Strength Analysis</h3>
 
-**Core Concept:**
-- **Relative Strength (RS)** = Stock Price / VNINDEX Price
-- Rising RS = Stock outperforming the market
-- Falling RS = Stock underperforming the market
+**Core Concept - Comparative Relative Strength (CRS):**
+- **CRS Formula**: (Stock's % Change) / (Benchmark's % Change)
+- **Interpretation**:
+  - CRS > 1.0: Stock is **outperforming** the market
+  - CRS < 1.0: Stock is **underperforming** the market
+  - CRS = 1.0: Stock moves **in line** with the market
 
-**Why RS Matters:**
+**Example:**
+- Stock gains +10%, VNINDEX gains +5%
+- CRS = 1.10 / 1.05 = 1.048 (Outperforming by 4.8%)
+
+**Why CRS Matters:**
 - Strong stocks become stronger (momentum effect)
-- RS identifies leadership before price breakouts
+- CRS identifies leadership before price breakouts
 - Best risk/reward in strongest stocks during bull markets
+- Measures **relative performance**, not absolute price
 
 **RS Percentile Ranking:**
 - **Top 20% (RS ≥80%)**: List A - Strong Leaders, highest probability
