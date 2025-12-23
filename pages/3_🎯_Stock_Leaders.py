@@ -243,9 +243,9 @@ def create_rs_chart(ticker: str, analysis_date: datetime, vnindex_data: pd.DataF
         row=3, col=1
     )
     
-    # Update layout
+    # Update layout with fullscreen support
     fig.update_layout(
-        height=700,
+        height=800,
         showlegend=True,
         legend=dict(
             orientation="h",
@@ -257,7 +257,11 @@ def create_rs_chart(ticker: str, analysis_date: datetime, vnindex_data: pd.DataF
         hovermode='x unified',
         margin=dict(l=50, r=50, t=80, b=50),
         paper_bgcolor='white',
-        plot_bgcolor='#f8f9fa'
+        plot_bgcolor='#f8f9fa',
+        modebar=dict(
+            orientation='v',
+            bgcolor='rgba(255,255,255,0.7)'
+        )
     )
     
     # Update axes
@@ -926,7 +930,22 @@ with tab1:
                 with st.expander(f"📊 View RS Chart for {result['ticker']}", expanded=False):
                     chart = create_rs_chart(result['ticker'], analysis_datetime, vnindex_data)
                     if chart:
-                        st.plotly_chart(chart, use_container_width=True)
+                        st.plotly_chart(
+                            chart, 
+                            use_container_width=True,
+                            config={
+                                'displayModeBar': True,
+                                'displaylogo': False,
+                                'modeBarButtonsToAdd': ['toggleSpikelines'],
+                                'toImageButtonOptions': {
+                                    'format': 'png',
+                                    'filename': f'{result["ticker"]}_RS_chart',
+                                    'height': 1200,
+                                    'width': 1600,
+                                    'scale': 2
+                                }
+                            }
+                        )
                     else:
                         st.warning("Unable to generate chart - insufficient data")
         
@@ -1105,7 +1124,22 @@ with tab2:
                 with st.expander(f"📊 View RS Chart for {result['ticker']}", expanded=False):
                     chart = create_rs_chart(result['ticker'], analysis_datetime, vnindex_data)
                     if chart:
-                        st.plotly_chart(chart, use_container_width=True)
+                        st.plotly_chart(
+                            chart, 
+                            use_container_width=True,
+                            config={
+                                'displayModeBar': True,
+                                'displaylogo': False,
+                                'modeBarButtonsToAdd': ['toggleSpikelines'],
+                                'toImageButtonOptions': {
+                                    'format': 'png',
+                                    'filename': f'{result["ticker"]}_RS_chart',
+                                    'height': 1200,
+                                    'width': 1600,
+                                    'scale': 2
+                                }
+                            }
+                        )
                     else:
                         st.warning("Unable to generate chart - insufficient data")
         
