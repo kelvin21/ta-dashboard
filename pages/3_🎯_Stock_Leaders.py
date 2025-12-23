@@ -133,6 +133,139 @@ def load_price_data_for_ticker(ticker: str, start_date: datetime, end_date: date
     except Exception as e:
         return pd.DataFrame()
 
+def create_rs_chart(ticker: str, analysis_date: datetime, vnindex_data: pd.DataFrame):
+    """
+    Create RS chart with supplemental indicators.
+    
+    Args:
+        ticker: Stock ticker
+        analysis_date: Analysis date
+        vnindex_data: VNINDEX data for RS calculation
+    
+    Returns:
+        Plotly figure with RS chart and indicators
+    """
+    # Load stock data (6 months)
+    start_date = analysis_date - timedelta(days=180)
+    df = load_price_data_for_ticker(ticker, start_date, analysis_date)
+    
+    if df.empty or len(df) < 20:
+        return None
+    
+    # Calculate RS and indicators
+    rs = calculate_relative_strength(df['close'], vnindex_data['close'])
+    if rs.empty or rs.isna().all():
+        return None
+    
+    df['rs'] = rs
+    df['rs_ma20'] = df['rs'].rolling(window=20, min_periods=20).mean()
+    df['rs_ma50'] = df['rs'].rolling(window=50, min_periods=50).mean()
+    
+    # Calculate RS RSI
+    rs_rsi = calculate_rsi(df['rs'], period=14)
+    df['rs_rsi'] = rs_rsi
+    
+    # Create subplots
+    fig = make_subplots(
+        rows=3, cols=1,
+        row_heights=[0.5, 0.25, 0.25],
+        vertical_spacing=0.05,
+        subplot_titles=(
+            f'{ticker} - Relative Strength vs VNINDEX',
+            'RS RSI (14)',
+            'Price'
+        )
+    )
+    
+    # Plot 1: RS with MA20 and MA50
+    fig.add_trace(
+        go.Scatter(
+            x=df.index, y=df['rs'],
+            name='RS',
+            line=dict(color='#1976D2', width=2),
+            hovertemplate='RS: %{y:.2f}<extra></extra>'
+        ),
+        row=1, col=1
+    )
+    
+    fig.add_trace(
+        go.Scatter(
+            x=df.index, y=df['rs_ma20'],
+            name='RS MA20',
+            line=dict(color='#FF9800', width=1.5, dash='dash'),
+            hovertemplate='MA20: %{y:.2f}<extra></extra>'
+        ),
+        row=1, col=1
+    )
+    
+    fig.add_trace(
+        go.Scatter(
+            x=df.index, y=df['rs_ma50'],
+            name='RS MA50',
+            line=dict(color='#9E9E9E', width=1, dash='dot'),
+            hovertemplate='MA50: %{y:.2f}<extra></extra>'
+        ),
+        row=1, col=1
+    )
+    
+    # Plot 2: RS RSI
+    fig.add_trace(
+        go.Scatter(
+            x=df.index, y=df['rs_rsi'],
+            name='RS RSI',
+            line=dict(color='#9C27B0', width=2),
+            fill='tozeroy',
+            fillcolor='rgba(156, 39, 176, 0.1)',
+            hovertemplate='RSI: %{y:.1f}<extra></extra>'
+        ),
+        row=2, col=1
+    )
+    
+    # Add RSI reference lines
+    fig.add_hline(y=70, line=dict(color='red', width=1, dash='dash'), row=2, col=1)
+    fig.add_hline(y=30, line=dict(color='green', width=1, dash='dash'), row=2, col=1)
+    fig.add_hline(y=50, line=dict(color='gray', width=0.5, dash='dot'), row=2, col=1)
+    
+    # Plot 3: Price
+    fig.add_trace(
+        go.Scatter(
+            x=df.index, y=df['close'],
+            name='Price',
+            line=dict(color='#4CAF50', width=2),
+            hovertemplate='Price: %{y:.2f}<extra></extra>'
+        ),
+        row=3, col=1
+    )
+    
+    # Update layout
+    fig.update_layout(
+        height=700,
+        showlegend=True,
+        legend=dict(
+            orientation="h",
+            yanchor="bottom",
+            y=1.02,
+            xanchor="right",
+            x=1
+        ),
+        hovermode='x unified',
+        margin=dict(l=50, r=50, t=80, b=50),
+        paper_bgcolor='white',
+        plot_bgcolor='#f8f9fa'
+    )
+    
+    # Update axes
+    fig.update_xaxes(showgrid=True, gridcolor='#e0e0e0')
+    fig.update_yaxes(showgrid=True, gridcolor='#e0e0e0')
+    
+    # Y-axis labels
+    fig.update_yaxes(title_text="RS Value", row=1, col=1)
+    fig.update_yaxes(title_text="RSI", row=2, col=1, range=[0, 100])
+    fig.update_yaxes(title_text="Price", row=3, col=1)
+    fig.update_xaxes(title_text="Date", row=3, col=1)
+    
+    return fig
+
 @st.cache_data(ttl=600)
 def analyze_stock_leadership(ticker: str, analysis_date: datetime, vnindex_data: pd.DataFrame) -> Dict:
     """
@@ -781,6 +914,14 @@ with tab1:
                 card_html = f'''<div style="border: 1px solid #e0e0e0; border-radius: 12px; padding: 14px; background: white; box-shadow: 0 2px 8px rgba(0,0,0,0.1); margin-bottom: 16px; min-height: 320px; display: flex; flex-direction: column;"><div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;"><div style="display: flex; align-items: center; gap: 8px;"><span style="font-size: 18px; font-weight: bold; color: #1976D2;">{ticker_escaped}</span><span style="font-size: 16px; color: {arrow_color};">{arrow}</span></div><div style="text-align: right; font-size: 14px;">{stars}</div></div><div style="margin-bottom: 10px;"><span style="background: {momentum_color}; color: white; padding: 3px 10px; border-radius: 12px; font-size: 11px; font-weight: 500;">✓ {momentum_badge}</span>{warning_badge}</div><div style="font-size: 28px; font-weight: bold; color: #1976D2; margin-bottom: 8px;">{result['close']:.2f}</div><div style="font-size: 12px; color: #666; margin-bottom: 8px;">{rs_status_text}</div><div style="display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 8px;">{rs_perc_badge}{momentum_5d_badge}</div><div style="display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 8px;">{rs_rsi_badge}{crossover_badge}</div><div style="display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 10px;">{obv_badge}{daily_rsi_badge}</div><div style="margin-top: auto;"><div style="font-size: 11px; color: #666; line-height: 1.4; border-top: 1px solid #e0e0e0; padding-top: 8px;">{description_escaped}</div></div></div>'''
                 
                 st.markdown(card_html, unsafe_allow_html=True)
+                
+                # Add chart expander below the card
+                with st.expander(f"📊 View RS Chart for {result['ticker']}", expanded=False):
+                    chart = create_rs_chart(result['ticker'], analysis_datetime, vnindex_data)
+                    if chart:
+                        st.plotly_chart(chart, use_container_width=True)
+                    else:
+                        st.warning("Unable to generate chart - insufficient data")
         
         # Add spacing after cards
         st.markdown("")
@@ -952,6 +1093,14 @@ with tab2:
                 # Create card HTML
                 card_html = f'''<div style="border: 1px solid #ffcdd2; border-radius: 12px; padding: 14px; background: white; box-shadow: 0 2px 8px rgba(244,67,54,0.1); margin-bottom: 16px; min-height: 320px; display: flex; flex-direction: column;"><div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;"><div style="display: flex; align-items: center; gap: 8px;"><span style="font-size: 18px; font-weight: bold; color: #F44336;">{ticker_escaped}</span><span style="font-size: 16px; color: {arrow_color};">{arrow}</span></div><div style="text-align: right; font-size: 14px;">{stars}</div></div><div style="margin-bottom: 10px;"><span style="background: {momentum_color}; color: white; padding: 3px 10px; border-radius: 12px; font-size: 11px; font-weight: 500;">✗ {momentum_badge}</span>{warning_badge}</div><div style="font-size: 28px; font-weight: bold; color: #F44336; margin-bottom: 8px;">{result['close']:.2f}</div><div style="font-size: 12px; color: #666; margin-bottom: 8px;">{rs_status_text}</div><div style="display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 8px;">{rs_perc_badge}{momentum_5d_badge}</div><div style="display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 8px;">{rs_rsi_badge}{crossover_badge}</div><div style="display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 10px;">{obv_badge}{daily_rsi_badge}</div><div style="margin-top: auto;"><div style="font-size: 11px; color: #666; line-height: 1.4; border-top: 1px solid #ffcdd2; padding-top: 8px;">{description_escaped}</div></div></div>'''                
                 st.markdown(card_html, unsafe_allow_html=True)
+                
+                # Add chart expander below the card
+                with st.expander(f"📊 View RS Chart for {result['ticker']}", expanded=False):
+                    chart = create_rs_chart(result['ticker'], analysis_datetime, vnindex_data)
+                    if chart:
+                        st.plotly_chart(chart, use_container_width=True)
+                    else:
+                        st.warning("Unable to generate chart - insufficient data")
         
         # Add spacing after cards
         st.markdown("")
