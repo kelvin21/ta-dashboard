@@ -580,11 +580,11 @@ with tab1:
         st.markdown("")
         
         # Display outperforming stocks in card format
-        # Create 3 columns for card layout
-        cols_per_row = 3
-        for idx, result in enumerate(outperforming_filtered[:50], start=1):  # Limit to top 50
+        # Create responsive columns for card layout (4 cards per row)
+        cols_per_row = 4
+        for idx, result in enumerate(outperforming_filtered[:100], start=1):  # Limit to top 100
             if (idx - 1) % cols_per_row == 0:
-                cols = st.columns(cols_per_row)
+                cols = st.columns(cols_per_row, gap="medium")
             
             col = cols[(idx - 1) % cols_per_row]
             
@@ -662,8 +662,20 @@ with tab1:
                 violations_escaped = html.escape(violations_text)
                 ticker_escaped = html.escape(result['ticker'])
                 
-                # Create card HTML
-                card_html = f'''<div style="border: 1px solid #e0e0e0; border-radius: 12px; padding: 16px; background: white; box-shadow: 0 2px 8px rgba(0,0,0,0.1); margin-bottom: 16px; height: 100%%; position: relative;"><div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;"><div style="display: flex; align-items: center; gap: 8px;"><span style="font-size: 20px; font-weight: bold; color: #1976D2;">{ticker_escaped}</span><span style="font-size: 18px; color: {arrow_color};">{arrow}</span></div><div style="text-align: right;">{stars}</div></div><div style="margin-bottom: 12px;"><span style="background: {momentum_color}; color: white; padding: 4px 12px; border-radius: 12px; font-size: 12px; font-weight: 500;">✓ {momentum_badge}</span>{warning_badge}</div><div style="font-size: 32px; font-weight: bold; color: #1976D2; margin-bottom: 8px;">{result['close']:.2f}</div><div style="font-size: 13px; color: #666; margin-bottom: 8px;">{rs_status_text}</div><div style="font-size: 13px; color: #666; margin-bottom: 4px;"><strong>Strength:</strong> {strength_rating}/5</div><div style="font-size: 13px; color: #666; margin-bottom: 12px;">{violations_escaped}</div><div style="margin-bottom: 12px;"><div style="background: {button_color}; color: white; padding: 12px; border-radius: 8px; text-align: center; font-weight: bold; font-size: 14px; cursor: pointer;">{button_text}</div></div><div style="margin-bottom: 12px;"><div style="background: #2196F3; color: white; padding: 8px; border-radius: 8px; text-align: center; font-size: 12px; cursor: pointer;">READ RS MA20</div></div><div style="font-size: 12px; color: #666; line-height: 1.5; border-top: 1px solid #e0e0e0; padding-top: 12px;">{description_escaped}</div></div>'''
+                # Additional stats for expandable section
+                rs_percentile_text = f"{result['rs_percentile']:.1f}%"
+                rs_value_text = f"{result['rs_current']:.2f}"
+                rs_ma20_text = f"{result.get('rs_ma20', 0):.2f}" if not np.isnan(result.get('rs_ma20', np.nan)) else "N/A"
+                rs_rsi_value = result.get('rs_rsi', np.nan)
+                rs_rsi_emoji = '🔴' if not np.isnan(rs_rsi_value) and rs_rsi_value > 70 else '🟢' if not np.isnan(rs_rsi_value) and rs_rsi_value < 30 else '🟡'
+                rs_rsi_text = f"{rs_rsi_emoji} {rs_rsi_value:.1f}" if not np.isnan(rs_rsi_value) else "N/A"
+                rs_distance_text = f"{result.get('rs_distance_pct', 0):+.1f}%" if not np.isnan(result.get('rs_distance_pct', np.nan)) else "N/A"
+                rsi_daily_text = f"{result['rsi_daily']:.1f}" if not np.isnan(result['rsi_daily']) else "N/A"
+                obv_status_text = result['obv_status']
+                crossover_status = result.get('rs_crossover_status', 'None')
+                
+                # Create card HTML with expandable stats
+                card_html = f'''<div style="border: 1px solid #e0e0e0; border-radius: 12px; padding: 14px; background: white; box-shadow: 0 2px 8px rgba(0,0,0,0.1); margin-bottom: 16px; min-height: 400px; display: flex; flex-direction: column;"><div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;"><div style="display: flex; align-items: center; gap: 8px;"><span style="font-size: 18px; font-weight: bold; color: #1976D2;">{ticker_escaped}</span><span style="font-size: 16px; color: {arrow_color};">{arrow}</span></div><div style="text-align: right; font-size: 14px;">{stars}</div></div><div style="margin-bottom: 10px;"><span style="background: {momentum_color}; color: white; padding: 3px 10px; border-radius: 12px; font-size: 11px; font-weight: 500;">✓ {momentum_badge}</span>{warning_badge}</div><div style="font-size: 28px; font-weight: bold; color: #1976D2; margin-bottom: 6px;">{result['close']:.2f}</div><div style="font-size: 12px; color: #666; margin-bottom: 6px;">{rs_status_text}</div><div style="font-size: 12px; color: #666; margin-bottom: 3px;"><strong>Strength:</strong> {strength_rating}/5</div><div style="font-size: 11px; color: #666; margin-bottom: 10px;">{violations_escaped}</div><details style="font-size: 11px; color: #666; margin-bottom: 10px; cursor: pointer;"><summary style="font-weight: bold; margin-bottom: 6px;">📊 Detailed Stats</summary><div style="padding: 8px 0; line-height: 1.8;"><div><strong>RS Percentile:</strong> {rs_percentile_text}</div><div><strong>RS Value:</strong> {rs_value_text}</div><div><strong>RS MA20:</strong> {rs_ma20_text}</div><div><strong>RS RSI:</strong> {rs_rsi_text}</div><div><strong>RS vs MA20:</strong> {rs_distance_text}</div><div><strong>RS Status:</strong> {crossover_status}</div><div><strong>RSI (Daily):</strong> {rsi_daily_text}</div><div><strong>OBV Status:</strong> {obv_status_text}</div></div></details><div style="margin-top: auto;"><div style="margin-bottom: 8px;"><div style="background: {button_color}; color: white; padding: 10px; border-radius: 8px; text-align: center; font-weight: bold; font-size: 13px; cursor: pointer;">{button_text}</div></div><div style="margin-bottom: 8px;"><div style="background: #2196F3; color: white; padding: 7px; border-radius: 8px; text-align: center; font-size: 11px; cursor: pointer;">READ RS MA20</div></div><div style="font-size: 11px; color: #666; line-height: 1.4; border-top: 1px solid #e0e0e0; padding-top: 8px;">{description_escaped}</div></div></div>'''
                 
                 st.markdown(card_html, unsafe_allow_html=True)
         
@@ -675,41 +687,99 @@ with tab2:
     if not underperforming_filtered:
         st.info(f"No underperforming stocks found.")
     else:
-        st.markdown(f"### Bottom {len(underperforming_filtered[:50])} Market Laggards")
+        st.markdown(f"### Bottom {len(underperforming_filtered[:100])} Market Laggards")
         st.caption("Sorted by RS percentile (lowest first) - stocks with weakest relative performance")
         st.markdown("")
         
-        # Display underperforming stocks
-        for idx, result in enumerate(underperforming_filtered[:50], start=1):
-            with st.expander(f"#{idx} | {result['ticker']} | RS: {result['rs_percentile']:.1f}% | {result['list_class']}", expanded=(idx <= 3)):
-                col1, col2 = st.columns(2)
+        # Display underperforming stocks in card format
+        cols_per_row = 4
+        for idx, result in enumerate(underperforming_filtered[:100], start=1):  # Limit to bottom 100
+            if (idx - 1) % cols_per_row == 0:
+                cols = st.columns(cols_per_row, gap="medium")
+            
+            col = cols[(idx - 1) % cols_per_row]
+            
+            with col:
+                # Determine momentum badge for underperforming (inverted logic)
+                momentum_badge = "Weak Momentum"
+                momentum_color = "#F44336"  # Red for underperforming
+                if result['rs_percentile'] <= 10:
+                    momentum_badge = "Very Weak"
+                    momentum_color = "#D32F2F"
+                elif result['rs_percentile'] <= 20:
+                    momentum_badge = "Weak Momentum"
+                    momentum_color = "#F44336"
+                else:
+                    momentum_badge = "Lagging"
+                    momentum_color = "#FF9800"
                 
-                with col1:
-                    st.markdown(f"**Price:** {result['close']:.2f}")
-                    st.markdown(f"**RS Percentile:** {result['rs_percentile']:.1f}%")
-                    st.markdown(f"**RS Value:** {result['rs_current']:.2f}")
-                    if show_rs_ma20 and not np.isnan(result.get('rs_ma20', np.nan)):
-                        st.markdown(f"**RS MA20:** {result['rs_ma20']:.2f}")
-                    if show_rs_indicators:
-                        if not np.isnan(result.get('rs_rsi', np.nan)):
-                            rs_rsi_color = '🔴' if result['rs_rsi'] > 70 else '🟢' if result['rs_rsi'] < 30 else '🟡'
-                            st.markdown(f"**RS RSI:** {rs_rsi_color} {result['rs_rsi']:.1f}")
-                        if not np.isnan(result.get('rs_distance_pct', np.nan)):
-                            st.markdown(f"**RS vs MA20:** {result['rs_distance_pct']:+.1f}%")
-                    st.markdown(f"**Classification:** `{result['list_class']}`")
+                # Calculate strength rating (inverted - lower is worse)
+                strength_rating = max(1, min(5, int((result['rs_percentile'] / 100) * 5) + 1))
+                stars = "⭐" * strength_rating
+                
+                # Determine arrow direction
+                arrow = "↑" if result['rs_current'] > result.get('rs_ma20', result['rs_current']) else "↓"
+                arrow_color = "#4CAF50" if arrow == "↑" else "#F44336"
+                
+                # Warning badge for extremely weak
+                warning_badge = ""
+                if result['rs_percentile'] <= 10:
+                    warning_badge = '<div style="display: flex; align-items: center; gap: 4px; color: #F44336; font-size: 12px; margin-top: 4px;"><i class="fas fa-exclamation-triangle"></i><span>Extreme Weakness</span></div>'
+                
+                # RS status indicator
+                rs_ma20_value = result.get('rs_ma20', 0)
+                if not np.isnan(rs_ma20_value):
+                    rs_diff_pct = ((result['rs_current'] - rs_ma20_value) / rs_ma20_value * 100) if rs_ma20_value != 0 else 0
+                    rs_status_text = f"S: RS MA20 ({rs_diff_pct:+.1f}%)"
+                else:
+                    rs_status_text = "S: RS MA20 (N/A)"
+                
+                # Build description
+                description_parts = []
+                if result['rs_percentile'] <= 10:
+                    description_parts.append("Extreme underperformance")
+                elif result['rs_percentile'] <= 20:
+                    description_parts.append("Significant weakness")
+                else:
+                    description_parts.append("Lagging market")
+                
+                if result['rs_current'] < result.get('rs_ma20', 0):
+                    description_parts.append("below RS MA20")
+                
+                if result.get('rs_crossover_signal') == 'Near Bullish':
+                    description_parts.append("potential reversal")
                     
-                with col2:
-                    st.markdown(f"**Description:** {result['description']}")
-                    st.warning("⚠️ **Weak RS:** Underperforming the market")
-                    
-                    # RS status
-                    crossover_status = result.get('rs_crossover_status', 'None')
-                    st.markdown(f"**RS Status:** {crossover_status}")
-                        
-                    if show_rsi and not np.isnan(result['rsi_daily']):
-                        st.markdown(f"**RSI (Daily):** {result['rsi_daily']:.1f}")
-                    if show_obv and result['obv_status'] != 'N/A':
-                        st.markdown(f"**OBV Status:** {result['obv_status']}")
+                description_text = " - ".join(description_parts) if description_parts else result['description']
+                
+                # Escape HTML
+                import html
+                description_escaped = html.escape(description_text)
+                violations_text = "⚠️ Weak RS: Underperforming the market"
+                violations_escaped = html.escape(violations_text)
+                ticker_escaped = html.escape(result['ticker'])
+                
+                # Additional stats
+                rs_percentile_text = f"{result['rs_percentile']:.1f}%"
+                rs_value_text = f"{result['rs_current']:.2f}"
+                rs_ma20_text = f"{result.get('rs_ma20', 0):.2f}" if not np.isnan(result.get('rs_ma20', np.nan)) else "N/A"
+                rs_rsi_value = result.get('rs_rsi', np.nan)
+                rs_rsi_emoji = '🔴' if not np.isnan(rs_rsi_value) and rs_rsi_value > 70 else '🟢' if not np.isnan(rs_rsi_value) and rs_rsi_value < 30 else '🟡'
+                rs_rsi_text = f"{rs_rsi_emoji} {rs_rsi_value:.1f}" if not np.isnan(rs_rsi_value) else "N/A"
+                rs_distance_text = f"{result.get('rs_distance_pct', 0):+.1f}%" if not np.isnan(result.get('rs_distance_pct', np.nan)) else "N/A"
+                rsi_daily_text = f"{result['rsi_daily']:.1f}" if not np.isnan(result['rsi_daily']) else "N/A"
+                obv_status_text = result['obv_status']
+                crossover_status = result.get('rs_crossover_status', 'None')
+                
+                # Button text - AVOID for underperformers
+                button_text = "AVOID"
+                button_color = "#F44336"
+                
+                # Create card HTML
+                card_html = f'''<div style="border: 1px solid #ffcdd2; border-radius: 12px; padding: 14px; background: white; box-shadow: 0 2px 8px rgba(244,67,54,0.1); margin-bottom: 16px; min-height: 400px; display: flex; flex-direction: column;"><div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;"><div style="display: flex; align-items: center; gap: 8px;"><span style="font-size: 18px; font-weight: bold; color: #F44336;">{ticker_escaped}</span><span style="font-size: 16px; color: {arrow_color};">{arrow}</span></div><div style="text-align: right; font-size: 14px;">{stars}</div></div><div style="margin-bottom: 10px;"><span style="background: {momentum_color}; color: white; padding: 3px 10px; border-radius: 12px; font-size: 11px; font-weight: 500;">✗ {momentum_badge}</span>{warning_badge}</div><div style="font-size: 28px; font-weight: bold; color: #F44336; margin-bottom: 6px;">{result['close']:.2f}</div><div style="font-size: 12px; color: #666; margin-bottom: 6px;">{rs_status_text}</div><div style="font-size: 12px; color: #666; margin-bottom: 3px;"><strong>Strength:</strong> {strength_rating}/5</div><div style="font-size: 11px; color: #F44336; margin-bottom: 10px;">{violations_escaped}</div><details style="font-size: 11px; color: #666; margin-bottom: 10px; cursor: pointer;"><summary style="font-weight: bold; margin-bottom: 6px;">📊 Detailed Stats</summary><div style="padding: 8px 0; line-height: 1.8;"><div><strong>RS Percentile:</strong> {rs_percentile_text}</div><div><strong>RS Value:</strong> {rs_value_text}</div><div><strong>RS MA20:</strong> {rs_ma20_text}</div><div><strong>RS RSI:</strong> {rs_rsi_text}</div><div><strong>RS vs MA20:</strong> {rs_distance_text}</div><div><strong>RS Status:</strong> {crossover_status}</div><div><strong>RSI (Daily):</strong> {rsi_daily_text}</div><div><strong>OBV Status:</strong> {obv_status_text}</div></div></details><div style="margin-top: auto;"><div style="margin-bottom: 8px;"><div style="background: {button_color}; color: white; padding: 10px; border-radius: 8px; text-align: center; font-weight: bold; font-size: 13px; cursor: pointer;">{button_text}</div></div><div style="margin-bottom: 8px;"><div style="background: #FF9800; color: white; padding: 7px; border-radius: 8px; text-align: center; font-size: 11px; cursor: pointer;">VIEW DETAILS</div></div><div style="font-size: 11px; color: #666; line-height: 1.4; border-top: 1px solid #ffcdd2; padding-top: 8px;">{description_escaped}</div></div></div>'''                
+                st.markdown(card_html, unsafe_allow_html=True)
+        
+        # Add spacing after cards
+        st.markdown("")
 
 st.markdown("---")
 
