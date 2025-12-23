@@ -25,6 +25,18 @@ if css_path.exists():
     with open(css_path) as f:
         st.markdown(f"<style>{f.read()}</style>", unsafe_allow_html=True)
 
+# Add custom CSS for container width
+st.markdown("""
+<style>
+    .stMainBlockContainer.block-container.st-emotion-cache-1w723zb.e4man114,
+    .main .block-container {
+        max-width: 1200px !important;
+        padding-left: 2rem !important;
+        padding-right: 2rem !important;
+    }
+</style>
+""", unsafe_allow_html=True)
+
 # Load FontAwesome
 st.markdown('<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/all.min.css">', unsafe_allow_html=True)
 
@@ -608,8 +620,28 @@ with tab1:
                     momentum_badge = "Moderate"
                     momentum_color = "#9E9E9E"
                 
-                # Calculate strength rating (1-5 stars)
-                strength_rating = min(5, max(1, int((result['rs_percentile'] / 100) * 5) + 1))
+                # Calculate strength rating (1-5 stars) based on RS percentile and momentum
+                base_rating = int((result['rs_percentile'] / 100) * 5)
+                
+                # Adjust rating based on RS momentum (RS vs MA20)
+                rs_ma20_value = result.get('rs_ma20', 0)
+                if not np.isnan(rs_ma20_value) and rs_ma20_value != 0:
+                    rs_momentum = ((result['rs_current'] - rs_ma20_value) / rs_ma20_value * 100)
+                    # Boost rating if RS is rising above MA20
+                    if rs_momentum > 5:  # Strong upward momentum
+                        base_rating += 1
+                    elif rs_momentum > 2:  # Moderate upward momentum
+                        base_rating += 0.5
+                    elif rs_momentum < -5:  # Negative momentum
+                        base_rating -= 1
+                    elif rs_momentum < -2:  # Weak momentum
+                        base_rating -= 0.5
+                
+                # Additional boost for bullish crossover
+                if result.get('rs_crossover_signal') == 'Bullish Cross':
+                    base_rating += 0.5
+                
+                strength_rating = min(5, max(1, int(base_rating) + 1))
                 stars = "⭐" * strength_rating
                 
                 # Determine arrow direction
@@ -652,10 +684,6 @@ with tab1:
                 
                 description_text = " - ".join(description_parts) if description_parts else result['description']
                 
-                # Button text based on list class
-                button_text = "BUY NOW" if result['list_class'] == 'List A' else "WATCH"
-                button_color = "#4CAF50" if result['list_class'] == 'List A' else "#2196F3"
-                
                 # Escape HTML special characters in text
                 import html
                 description_escaped = html.escape(description_text)
@@ -675,7 +703,7 @@ with tab1:
                 crossover_status = result.get('rs_crossover_status', 'None')
                 
                 # Create card HTML with expandable stats
-                card_html = f'''<div style="border: 1px solid #e0e0e0; border-radius: 12px; padding: 14px; background: white; box-shadow: 0 2px 8px rgba(0,0,0,0.1); margin-bottom: 16px; min-height: 400px; display: flex; flex-direction: column;"><div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;"><div style="display: flex; align-items: center; gap: 8px;"><span style="font-size: 18px; font-weight: bold; color: #1976D2;">{ticker_escaped}</span><span style="font-size: 16px; color: {arrow_color};">{arrow}</span></div><div style="text-align: right; font-size: 14px;">{stars}</div></div><div style="margin-bottom: 10px;"><span style="background: {momentum_color}; color: white; padding: 3px 10px; border-radius: 12px; font-size: 11px; font-weight: 500;">✓ {momentum_badge}</span>{warning_badge}</div><div style="font-size: 28px; font-weight: bold; color: #1976D2; margin-bottom: 6px;">{result['close']:.2f}</div><div style="font-size: 12px; color: #666; margin-bottom: 6px;">{rs_status_text}</div><div style="font-size: 12px; color: #666; margin-bottom: 3px;"><strong>Strength:</strong> {strength_rating}/5</div><div style="font-size: 11px; color: #666; margin-bottom: 10px;">{violations_escaped}</div><details style="font-size: 11px; color: #666; margin-bottom: 10px; cursor: pointer;"><summary style="font-weight: bold; margin-bottom: 6px;">📊 Detailed Stats</summary><div style="padding: 8px 0; line-height: 1.8;"><div><strong>RS Percentile:</strong> {rs_percentile_text}</div><div><strong>RS Value:</strong> {rs_value_text}</div><div><strong>RS MA20:</strong> {rs_ma20_text}</div><div><strong>RS RSI:</strong> {rs_rsi_text}</div><div><strong>RS vs MA20:</strong> {rs_distance_text}</div><div><strong>RS Status:</strong> {crossover_status}</div><div><strong>RSI (Daily):</strong> {rsi_daily_text}</div><div><strong>OBV Status:</strong> {obv_status_text}</div></div></details><div style="margin-top: auto;"><div style="margin-bottom: 8px;"><div style="background: {button_color}; color: white; padding: 10px; border-radius: 8px; text-align: center; font-weight: bold; font-size: 13px; cursor: pointer;">{button_text}</div></div><div style="margin-bottom: 8px;"><div style="background: #2196F3; color: white; padding: 7px; border-radius: 8px; text-align: center; font-size: 11px; cursor: pointer;">READ RS MA20</div></div><div style="font-size: 11px; color: #666; line-height: 1.4; border-top: 1px solid #e0e0e0; padding-top: 8px;">{description_escaped}</div></div></div>'''
+                card_html = f'''<div style="border: 1px solid #e0e0e0; border-radius: 12px; padding: 14px; background: white; box-shadow: 0 2px 8px rgba(0,0,0,0.1); margin-bottom: 16px; min-height: 350px; display: flex; flex-direction: column;"><div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;"><div style="display: flex; align-items: center; gap: 8px;"><span style="font-size: 18px; font-weight: bold; color: #1976D2;">{ticker_escaped}</span><span style="font-size: 16px; color: {arrow_color};">{arrow}</span></div><div style="text-align: right; font-size: 14px;">{stars}</div></div><div style="margin-bottom: 10px;"><span style="background: {momentum_color}; color: white; padding: 3px 10px; border-radius: 12px; font-size: 11px; font-weight: 500;">✓ {momentum_badge}</span>{warning_badge}</div><div style="font-size: 28px; font-weight: bold; color: #1976D2; margin-bottom: 6px;">{result['close']:.2f}</div><div style="font-size: 12px; color: #666; margin-bottom: 6px;">{rs_status_text}</div><div style="font-size: 12px; color: #666; margin-bottom: 3px;"><strong>Strength:</strong> {strength_rating}/5</div><div style="font-size: 11px; color: #666; margin-bottom: 10px;">{violations_escaped}</div><details style="font-size: 11px; color: #666; margin-bottom: 10px; cursor: pointer;"><summary style="font-weight: bold; margin-bottom: 6px;">📊 Detailed Stats</summary><div style="padding: 8px 0; line-height: 1.8;"><div><strong>RS Percentile:</strong> {rs_percentile_text}</div><div><strong>RS Value:</strong> {rs_value_text}</div><div><strong>RS MA20:</strong> {rs_ma20_text}</div><div><strong>RS RSI:</strong> {rs_rsi_text}</div><div><strong>RS vs MA20:</strong> {rs_distance_text}</div><div><strong>RS Status:</strong> {crossover_status}</div><div><strong>RSI (Daily):</strong> {rsi_daily_text}</div><div><strong>OBV Status:</strong> {obv_status_text}</div></div></details><div style="margin-top: auto;"><div style="font-size: 11px; color: #666; line-height: 1.4; border-top: 1px solid #e0e0e0; padding-top: 8px;">{description_escaped}</div></div></div>'''
                 
                 st.markdown(card_html, unsafe_allow_html=True)
         
@@ -713,8 +741,22 @@ with tab2:
                     momentum_badge = "Lagging"
                     momentum_color = "#FF9800"
                 
-                # Calculate strength rating (inverted - lower is worse)
-                strength_rating = max(1, min(5, int((result['rs_percentile'] / 100) * 5) + 1))
+                # Calculate strength rating (inverted - lower is worse) with momentum adjustment
+                base_rating = int((result['rs_percentile'] / 100) * 5)
+                
+                # Adjust rating based on RS momentum
+                rs_ma20_value = result.get('rs_ma20', 0)
+                if not np.isnan(rs_ma20_value) and rs_ma20_value != 0:
+                    rs_momentum = ((result['rs_current'] - rs_ma20_value) / rs_ma20_value * 100)
+                    # Penalize if RS is falling below MA20
+                    if rs_momentum < -5:  # Strong downward momentum
+                        base_rating -= 1
+                    elif rs_momentum < -2:  # Moderate downward momentum
+                        base_rating -= 0.5
+                    elif rs_momentum > 2:  # Showing recovery
+                        base_rating += 0.5
+                
+                strength_rating = max(1, min(5, int(base_rating) + 1))
                 stars = "⭐" * strength_rating
                 
                 # Determine arrow direction
@@ -770,12 +812,8 @@ with tab2:
                 obv_status_text = result['obv_status']
                 crossover_status = result.get('rs_crossover_status', 'None')
                 
-                # Button text - AVOID for underperformers
-                button_text = "AVOID"
-                button_color = "#F44336"
-                
                 # Create card HTML
-                card_html = f'''<div style="border: 1px solid #ffcdd2; border-radius: 12px; padding: 14px; background: white; box-shadow: 0 2px 8px rgba(244,67,54,0.1); margin-bottom: 16px; min-height: 400px; display: flex; flex-direction: column;"><div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;"><div style="display: flex; align-items: center; gap: 8px;"><span style="font-size: 18px; font-weight: bold; color: #F44336;">{ticker_escaped}</span><span style="font-size: 16px; color: {arrow_color};">{arrow}</span></div><div style="text-align: right; font-size: 14px;">{stars}</div></div><div style="margin-bottom: 10px;"><span style="background: {momentum_color}; color: white; padding: 3px 10px; border-radius: 12px; font-size: 11px; font-weight: 500;">✗ {momentum_badge}</span>{warning_badge}</div><div style="font-size: 28px; font-weight: bold; color: #F44336; margin-bottom: 6px;">{result['close']:.2f}</div><div style="font-size: 12px; color: #666; margin-bottom: 6px;">{rs_status_text}</div><div style="font-size: 12px; color: #666; margin-bottom: 3px;"><strong>Strength:</strong> {strength_rating}/5</div><div style="font-size: 11px; color: #F44336; margin-bottom: 10px;">{violations_escaped}</div><details style="font-size: 11px; color: #666; margin-bottom: 10px; cursor: pointer;"><summary style="font-weight: bold; margin-bottom: 6px;">📊 Detailed Stats</summary><div style="padding: 8px 0; line-height: 1.8;"><div><strong>RS Percentile:</strong> {rs_percentile_text}</div><div><strong>RS Value:</strong> {rs_value_text}</div><div><strong>RS MA20:</strong> {rs_ma20_text}</div><div><strong>RS RSI:</strong> {rs_rsi_text}</div><div><strong>RS vs MA20:</strong> {rs_distance_text}</div><div><strong>RS Status:</strong> {crossover_status}</div><div><strong>RSI (Daily):</strong> {rsi_daily_text}</div><div><strong>OBV Status:</strong> {obv_status_text}</div></div></details><div style="margin-top: auto;"><div style="margin-bottom: 8px;"><div style="background: {button_color}; color: white; padding: 10px; border-radius: 8px; text-align: center; font-weight: bold; font-size: 13px; cursor: pointer;">{button_text}</div></div><div style="margin-bottom: 8px;"><div style="background: #FF9800; color: white; padding: 7px; border-radius: 8px; text-align: center; font-size: 11px; cursor: pointer;">VIEW DETAILS</div></div><div style="font-size: 11px; color: #666; line-height: 1.4; border-top: 1px solid #ffcdd2; padding-top: 8px;">{description_escaped}</div></div></div>'''                
+                card_html = f'''<div style="border: 1px solid #ffcdd2; border-radius: 12px; padding: 14px; background: white; box-shadow: 0 2px 8px rgba(244,67,54,0.1); margin-bottom: 16px; min-height: 350px; display: flex; flex-direction: column;"><div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;"><div style="display: flex; align-items: center; gap: 8px;"><span style="font-size: 18px; font-weight: bold; color: #F44336;">{ticker_escaped}</span><span style="font-size: 16px; color: {arrow_color};">{arrow}</span></div><div style="text-align: right; font-size: 14px;">{stars}</div></div><div style="margin-bottom: 10px;"><span style="background: {momentum_color}; color: white; padding: 3px 10px; border-radius: 12px; font-size: 11px; font-weight: 500;">✗ {momentum_badge}</span>{warning_badge}</div><div style="font-size: 28px; font-weight: bold; color: #F44336; margin-bottom: 6px;">{result['close']:.2f}</div><div style="font-size: 12px; color: #666; margin-bottom: 6px;">{rs_status_text}</div><div style="font-size: 12px; color: #666; margin-bottom: 3px;"><strong>Strength:</strong> {strength_rating}/5</div><div style="font-size: 11px; color: #F44336; margin-bottom: 10px;">{violations_escaped}</div><details style="font-size: 11px; color: #666; margin-bottom: 10px; cursor: pointer;"><summary style="font-weight: bold; margin-bottom: 6px;">📊 Detailed Stats</summary><div style="padding: 8px 0; line-height: 1.8;"><div><strong>RS Percentile:</strong> {rs_percentile_text}</div><div><strong>RS Value:</strong> {rs_value_text}</div><div><strong>RS MA20:</strong> {rs_ma20_text}</div><div><strong>RS RSI:</strong> {rs_rsi_text}</div><div><strong>RS vs MA20:</strong> {rs_distance_text}</div><div><strong>RS Status:</strong> {crossover_status}</div><div><strong>RSI (Daily):</strong> {rsi_daily_text}</div><div><strong>OBV Status:</strong> {obv_status_text}</div></div></details><div style="margin-top: auto;"><div style="font-size: 11px; color: #666; line-height: 1.4; border-top: 1px solid #ffcdd2; padding-top: 8px;">{description_escaped}</div></div></div>'''                
                 st.markdown(card_html, unsafe_allow_html=True)
         
         # Add spacing after cards
@@ -848,36 +886,137 @@ with col2:
 
 st.markdown("---")
 
-# Strategy Notes
-st.markdown("## 📚 Trading Strategy Notes")
+# Methodology Section
+st.markdown("## 📚 Methodology & Rating System")
 
 st.markdown("""
-<div class="material-card elevation-2" style="padding: 1.5rem;">
-<h4>⚠️ Important Reminders</h4>
+<div class="material-card elevation-2" style="padding: 1.5rem; margin-bottom: 1rem;">
+<h3>🎯 Relative Strength Analysis</h3>
 
-**DO NOT Buy Immediately**
-- Prediction list identifies stocks BEFORE acceleration
-- Wait for valid entry trigger
+**Core Concept:**
+- **Relative Strength (RS)** = Stock Price / VNINDEX Price
+- Rising RS = Stock outperforming the market
+- Falling RS = Stock underperforming the market
+
+**Why RS Matters:**
+- Strong stocks become stronger (momentum effect)
+- RS identifies leadership before price breakouts
+- Best risk/reward in strongest stocks during bull markets
+
+**RS Percentile Ranking:**
+- **Top 20% (RS ≥80%)**: List A - Strong Leaders, highest probability
+- **Top 30% (RS 70-80%)**: List B - Emerging Leaders, watchlist
+- **Bottom 30% (RS ≤30%)**: Laggards - Underperformers, avoid/reduce
+- **Middle Range**: Neutral - no clear edge
+
+</div>
+""", unsafe_allow_html=True)
+
+st.markdown("""
+<div class="material-card elevation-2" style="padding: 1.5rem; margin-bottom: 1rem;">
+<h3>⭐ Strength Rating System (1-5 Stars)</h3>
+
+**Base Rating:** Derived from RS Percentile
+- 5 stars: Top 80-100% RS
+- 4 stars: 60-80% RS
+- 3 stars: 40-60% RS
+- 2 stars: 20-40% RS
+- 1 star: 0-20% RS
+
+**Momentum Adjustments:**
+- **+1 star**: RS >5% above MA20 (strong upward momentum)
+- **+0.5 star**: RS 2-5% above MA20 (building momentum)
+- **+0.5 star**: Bullish crossover (RS just crossed above MA20)
+- **-0.5 star**: RS 2-5% below MA20 (weakening momentum)
+- **-1 star**: RS >5% below MA20 (negative momentum)
+
+**Key Insight:** A stock with 75% RS percentile but rising momentum (RS above MA20) may be rated higher than a stock with 85% RS but falling momentum.
+
+</div>
+""", unsafe_allow_html=True)
+
+st.markdown("""
+<div class="material-card elevation-2" style="padding: 1.5rem; margin-bottom: 1rem;">
+<h3>🚦 Entry & Exit Rules</h3>
+
+**⚠️ DO NOT Buy Immediately**
+- List identifies stocks BEFORE they accelerate
+- High RS alone is not an entry signal
+- Wait for proper setup and trigger
 
 **Valid Entry Triggers:**
-- RSI crosses above 55
-- Price reclaims EMA20
-- Break of consolidation range
-- Volume expansion confirms OBV
+1. **RSI crosses above 55** (momentum confirmation)
+2. **Price reclaims EMA20** (trend support)
+3. **Breakout from consolidation** (volatility contraction)
+4. **Volume expansion + OBV confirmation** (institutional buying)
 
-**Exit Rules:**
-- RS breaks below weekly EMA10
-- OBV makes lower low
-- Daily RSI <45 for 3 consecutive sessions
-- Underperforms VNINDEX for 5 sessions
+**Exit Signals:**
+1. RS breaks below weekly EMA10 (loss of relative strength)
+2. OBV makes lower low (distribution)
+3. Daily RSI <45 for 3 consecutive days (momentum break)
+4. Underperforms VNINDEX for 5 consecutive sessions
 
 **Stop-Loss:**
 - Below EMA50 or last swing low
 - Leaders should not lose EMA50 decisively
+- Adjust stops as stock progresses
+
+</div>
+""", unsafe_allow_html=True)
+
+st.markdown("""
+<div class="material-card elevation-2" style="padding: 1.5rem; margin-bottom: 1rem;">
+<h3>📊 Technical Indicators Explained</h3>
+
+**RS MA20:** 20-day moving average of Relative Strength
+- Smooths RS line to identify trend
+- Crossovers signal momentum shifts
+- Distance from MA20 shows momentum strength
+
+**RS RSI:** RSI calculated on RS values (not price)
+- >70: RS overbought (distribution risk)
+- <30: RS oversold (potential reversal)
+- 40-60: Healthy RS momentum
+
+**RS Status:**
+- **🚀 Just Crossed Above**: Bullish momentum trigger
+- **📈 Near Cross Above**: Setup forming, watch closely
+- **✓ Above MA20**: Positive momentum trend
+- **⚠️ Just Crossed Below**: Losing momentum
+
+**OBV (On-Balance Volume):**
+- Tracks cumulative volume flow
+- Confirms price moves with volume
+- Divergences warn of trend changes
+
+</div>
+""", unsafe_allow_html=True)
+
+st.markdown("""
+<div class="material-card elevation-2" style="padding: 1.5rem;">
+<h3>⚠️ Important Disclaimers</h3>
+
+**Risk Warning:**
+- Past relative strength does not guarantee future performance
+- High RS stocks can still decline in bear markets
+- Always use proper position sizing and risk management
+- This is analysis, not trading advice
+
+**Best Practices:**
+- Focus on top RS stocks in confirmed uptrends
+- Diversify across multiple high-RS stocks
+- Don't chase overextended stocks (RS >10% above MA20)
+- Monitor market breadth and VNINDEX direction
+- Combine RS with your own trading system
+
+**Data Updates:**
+- Analysis based on end-of-day (EOD) data
+- RS calculations use daily closing prices
+- Update frequency: Daily after market close
 
 </div>
 """, unsafe_allow_html=True)
 
 st.markdown("---")
-st.markdown("_Stock Leaders Detection • Relative Strength Focus • Daily EOD Analysis_")
+st.markdown("_Stock Leaders Detection • Relative Strength Focus • Daily EOD Analysis • Not Financial Advice_")
 
