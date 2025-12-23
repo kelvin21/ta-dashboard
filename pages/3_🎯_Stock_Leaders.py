@@ -631,9 +631,11 @@ with tab1:
                 # RS status indicator
                 rs_status_text = ""
                 rs_ma20_value = result.get('rs_ma20', 0)
-                if not np.isnan(rs_ma20_value) and show_rs_ma20:
+                if not np.isnan(rs_ma20_value):
                     rs_diff_pct = ((result['rs_current'] - rs_ma20_value) / rs_ma20_value * 100) if rs_ma20_value != 0 else 0
                     rs_status_text = f"S: RS MA20 ({rs_diff_pct:+.1f}%)"
+                else:
+                    rs_status_text = "S: RS MA20 (N/A)"
                 
                 # Violations check
                 violations_text = "No recent violations"
@@ -696,7 +698,7 @@ with tab1:
                     </div>
                     
                     <!-- Price -->
-                    <div style="font-size: 32px; font-weight: bold; color: #1976D2; margin-bottom: 4px;">
+                    <div style="font-size: 32px; font-weight: bold; color: #1976D2; margin-bottom: 8px;">
                         {result['close']:.2f}
                     </div>
                     
@@ -723,6 +725,7 @@ with tab1:
                             text-align: center;
                             font-weight: bold;
                             font-size: 14px;
+                            cursor: pointer;
                         ">{button_text}</div>
                     </div>
                     
@@ -735,6 +738,7 @@ with tab1:
                             border-radius: 8px;
                             text-align: center;
                             font-size: 12px;
+                            cursor: pointer;
                         ">READ RS MA20</div>
                     </div>
                     
