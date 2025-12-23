@@ -51,7 +51,7 @@ except ImportError:
 try:
     from utils.indicators import calculate_all_indicators, calculate_rsi
     from utils.relative_strength import (
-        calculate_relative_strength, calculate_rs_percentile, is_rs_near_high,
+        calculate_relative_strength, calculate_multi_period_rs, calculate_rs_percentile, is_rs_near_high,
         calculate_obv, analyze_obv_status, calculate_leader_score,
         classify_prediction_list, generate_expectation, check_entry_trigger,
         check_exit_signal, format_score_breakdown
@@ -72,16 +72,26 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # Summary/Introduction Section
-st.markdown("### 📊 What is Comparative Relative Strength (CRS)?")
+st.markdown("### 📊 What is Multi-Period Relative Strength?")
 st.write("""
-**Comparative Relative Strength (CRS)** measures how a stock performs compared to the market index (VNINDEX). 
+**Multi-Period RS** measures stock momentum across **three timeframes** (1M, 2M, 3M) for comprehensive analysis:
 
-**Formula**: CRS = (Stock's % Change) / (Benchmark's % Change)
+**Individual Periods:**
+- **1M RS** (21 days): Short-term momentum - Most recent strength
+- **2M RS** (42 days): Medium-term momentum - Swing trading horizon  
+- **3M RS** (63 days): Longer-term momentum - Position building trend
 
-- **CRS > 1.0**: Stock is **outperforming** the market
-- **CRS < 1.0**: Stock is **underperforming** the market
+**Composite RS** = Weighted average (1M: 50%, 2M: 30%, 3M: 20%)
+- Emphasizes recent momentum while considering longer trends
+- **RS > 1.0**: Outperforming VNINDEX
+- **RS < 1.0**: Underperforming VNINDEX
 
-This is NOT the same as RSI (Relative Strength Index).
+**Trend Analysis:**
+- **Accelerating**: 1M > 2M > 3M (Getting stronger - Best setup)
+- **Decelerating**: 1M < 2M < 3M (Getting weaker - Exit signal)
+
+This multi-timeframe approach captures momentum **consistency** and **direction**, 
+providing better ticker comparison than single-period analysis.
 """)
 
 col_intro1, col_intro2 = st.columns(2)
@@ -158,8 +168,9 @@ def create_rs_chart(ticker: str, analysis_date: datetime, vnindex_data: pd.DataF
     if df.empty or len(df) < 20:
         return None
     
-    # Calculate RS and indicators using CRS formula
-    rs = calculate_relative_strength(df['close'], vnindex_data['close'], method='percentage')
+    # Calculate RS using momentum-based method (2M/42-day for charts)
+    # This matches the baseline used for MA calculations in analysis
+    rs = calculate_relative_strength(df['close'], vnindex_data['close'], method='momentum', lookback=42)
     if rs.empty or rs.isna().all():
         return None
     
@@ -296,24 +307,29 @@ def analyze_stock_leadership(ticker: str, analysis_date: datetime, vnindex_data:
     if df.empty or len(df) < 20:
         return None
     
-    # Calculate Relative Strength using CRS formula (PRIMARY METRIC)
-    # CRS = (Stock % Change) / (Benchmark % Change)
-    rs = calculate_relative_strength(df['close'], vnindex_data['close'], method='percentage')
-    if rs.empty or rs.isna().all():
+    # Calculate Multi-Period RS (1M, 2M, 3M) for comprehensive momentum analysis
+    rs_analysis = calculate_multi_period_rs(df['close'], vnindex_data['close'])
+    
+    # Use composite RS as primary metric (weighted: 1M=50%, 2M=30%, 3M=20%)
+    rs_current = rs_analysis['rs_composite']
+    if np.isnan(rs_current):
         return None
     
-    df['rs'] = rs
+    # Store all RS periods in dataframe (use 2M for MA calculations)
+    df['rs'] = rs_analysis['rs_2m_series']  # 2-month for MA baseline
+    df['rs_1m'] = rs_analysis['rs_1m_series']
+    df['rs_2m'] = rs_analysis['rs_2m_series']
+    df['rs_3m'] = rs_analysis['rs_3m_series']
     
-    # Calculate RS MA20 for crossover detection
+    # Calculate RS MA20 for crossover detection (using 2M RS)
     df['rs_ma20'] = df['rs'].rolling(window=20, min_periods=20).mean()
     
-    # Calculate RSI on RS values (to detect overbought RS)
+    # Calculate RSI on RS values (to detect overbought RS) - using 2M RS
     rs_rsi = calculate_rsi(df['rs'], period=14)
     df['rs_rsi'] = rs_rsi
     
     # Get current values
     current = df.iloc[-1]
-    rs_current = current['rs']
     rs_ma20 = current.get('rs_ma20', np.nan)
     rs_rsi_value = current.get('rs_rsi', np.nan)
     
@@ -403,7 +419,11 @@ def analyze_stock_leadership(ticker: str, analysis_date: datetime, vnindex_data:
     return {
         'ticker': ticker,
         'close': current['close'],
-        'rs_current': rs_current,
+        'rs_current': rs_current,  # Composite RS (weighted 1M, 2M, 3M)
+        'rs_1m': rs_analysis['rs_1m'],
+        'rs_2m': rs_analysis['rs_2m'],
+        'rs_3m': rs_analysis['rs_3m'],
+        'rs_trend': rs_analysis['rs_trend'],  # Accelerating/Decelerating/Stable
         'rs_ma20': rs_ma20,
         'rs_rsi': rs_rsi_value,
         'rs_distance_pct': rs_distance_pct,
@@ -856,6 +876,60 @@ with tab1:
                 else:
                     rs_perc_badge = f'<span style="background: #9E9E9E; color: white; padding: 2px 8px; border-radius: 8px; font-size: 10px; font-weight: bold;">RS: {rs_perc:.0f}%</span>'
                 
+                # Multi-period RS badges (1M, 2M, 3M)
+                rs_1m = result.get('rs_1m', np.nan)
+                rs_2m = result.get('rs_2m', np.nan)
+                rs_3m = result.get('rs_3m', np.nan)
+                rs_trend = result.get('rs_trend', 'N/A')
+                
+                # Color code based on value relative to 1.0
+                def get_rs_color(rs_val):
+                    if np.isnan(rs_val):
+                        return '#9E9E9E'
+                    elif rs_val >= 1.05:
+                        return '#4CAF50'  # Strong green
+                    elif rs_val >= 1.02:
+                        return '#8BC34A'  # Light green
+                    elif rs_val >= 0.98:
+                        return '#FFC107'  # Yellow (neutral)
+                    elif rs_val >= 0.95:
+                        return '#FF9800'  # Orange
+                    else:
+                        return '#F44336'  # Red
+                
+                rs_1m_color = get_rs_color(rs_1m)
+                rs_2m_color = get_rs_color(rs_2m)
+                rs_3m_color = get_rs_color(rs_3m)
+                
+                if not np.isnan(rs_1m):
+                    rs_1m_badge = f'<span style="background: {rs_1m_color}; color: white; padding: 2px 6px; border-radius: 6px; font-size: 9px; font-weight: bold;">1M: {rs_1m:.2f}</span>'
+                else:
+                    rs_1m_badge = '<span style="background: #9E9E9E; color: white; padding: 2px 6px; border-radius: 6px; font-size: 9px;">1M: N/A</span>'
+                
+                if not np.isnan(rs_2m):
+                    rs_2m_badge = f'<span style="background: {rs_2m_color}; color: white; padding: 2px 6px; border-radius: 6px; font-size: 9px; font-weight: bold;">2M: {rs_2m:.2f}</span>'
+                else:
+                    rs_2m_badge = '<span style="background: #9E9E9E; color: white; padding: 2px 6px; border-radius: 6px; font-size: 9px;">2M: N/A</span>'
+                
+                if not np.isnan(rs_3m):
+                    rs_3m_badge = f'<span style="background: {rs_3m_color}; color: white; padding: 2px 6px; border-radius: 6px; font-size: 9px; font-weight: bold;">3M: {rs_3m:.2f}</span>'
+                else:
+                    rs_3m_badge = '<span style="background: #9E9E9E; color: white; padding: 2px 6px; border-radius: 6px; font-size: 9px;">3M: N/A</span>'
+                
+                # RS Trend badge
+                if rs_trend == 'Accelerating':
+                    rs_trend_badge = '<span style="background: #1B5E20; color: white; padding: 2px 6px; border-radius: 6px; font-size: 9px; font-weight: bold;">🚀 Accelerating</span>'
+                elif rs_trend == 'Strengthening':
+                    rs_trend_badge = '<span style="background: #4CAF50; color: white; padding: 2px 6px; border-radius: 6px; font-size: 9px; font-weight: bold;">📈 Strengthening</span>'
+                elif rs_trend == 'Decelerating':
+                    rs_trend_badge = '<span style="background: #F44336; color: white; padding: 2px 6px; border-radius: 6px; font-size: 9px; font-weight: bold;">⬇️ Decelerating</span>'
+                elif rs_trend == 'Weakening':
+                    rs_trend_badge = '<span style="background: #FF9800; color: white; padding: 2px 6px; border-radius: 6px; font-size: 9px; font-weight: bold;">📉 Weakening</span>'
+                elif rs_trend == 'Stable':
+                    rs_trend_badge = '<span style="background: #2196F3; color: white; padding: 2px 6px; border-radius: 6px; font-size: 9px; font-weight: bold;">↔️ Stable</span>'
+                else:
+                    rs_trend_badge = '<span style="background: #9E9E9E; color: white; padding: 2px 6px; border-radius: 6px; font-size: 9px;">Trend: N/A</span>'
+                
                 # 5-day momentum indicator
                 rs_5d = result.get('rs_5d_change', np.nan)
                 if not np.isnan(rs_5d):
@@ -925,7 +999,7 @@ with tab1:
                     daily_rsi_badge = '<span style="background: #9E9E9E; color: white; padding: 2px 8px; border-radius: 8px; font-size: 10px; font-weight: bold;">Daily RSI: N/A</span>'
                 
                 # Create card HTML with visual signals
-                card_html = f'''<div style="border: 1px solid #e0e0e0; border-radius: 12px; padding: 14px; background: white; box-shadow: 0 2px 8px rgba(0,0,0,0.1); margin-bottom: 16px; min-height: 320px; display: flex; flex-direction: column;"><div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;"><div style="display: flex; align-items: center; gap: 8px;"><span style="font-size: 18px; font-weight: bold; color: #1976D2;">{ticker_escaped}</span><span style="font-size: 16px; color: {arrow_color};">{arrow}</span></div><div style="text-align: right; font-size: 14px;">{stars}</div></div><div style="margin-bottom: 10px;"><span style="background: {momentum_color}; color: white; padding: 3px 10px; border-radius: 12px; font-size: 11px; font-weight: 500;">✓ {momentum_badge}</span>{warning_badge}</div><div style="font-size: 28px; font-weight: bold; color: #1976D2; margin-bottom: 8px;">{result['close']:.2f}</div><div style="font-size: 12px; color: #666; margin-bottom: 8px;">{rs_status_text}</div><div style="display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 8px;">{rs_perc_badge}{momentum_5d_badge}</div><div style="display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 8px;">{rs_rsi_badge}{crossover_badge}</div><div style="display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 10px;">{obv_badge}{daily_rsi_badge}</div><div style="margin-top: auto;"><div style="font-size: 11px; color: #666; line-height: 1.4; border-top: 1px solid #e0e0e0; padding-top: 8px;">{description_escaped}</div></div></div>'''
+                card_html = f'''<div style="border: 1px solid #e0e0e0; border-radius: 12px; padding: 14px; background: white; box-shadow: 0 2px 8px rgba(0,0,0,0.1); margin-bottom: 16px; min-height: 360px; display: flex; flex-direction: column;"><div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;"><div style="display: flex; align-items: center; gap: 8px;"><span style="font-size: 18px; font-weight: bold; color: #1976D2;">{ticker_escaped}</span><span style="font-size: 16px; color: {arrow_color};">{arrow}</span></div><div style="text-align: right; font-size: 14px;">{stars}</div></div><div style="margin-bottom: 10px;"><span style="background: {momentum_color}; color: white; padding: 3px 10px; border-radius: 12px; font-size: 11px; font-weight: 500;">✓ {momentum_badge}</span>{warning_badge}</div><div style="font-size: 28px; font-weight: bold; color: #1976D2; margin-bottom: 8px;">{result['close']:.2f}</div><div style="font-size: 12px; color: #666; margin-bottom: 8px;">{rs_status_text}</div><div style="display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 6px;">{rs_perc_badge}{momentum_5d_badge}</div><div style="display: flex; flex-wrap: wrap; gap: 3px; margin-bottom: 6px; padding: 4px; background: #F5F5F5; border-radius: 6px;">{rs_1m_badge}{rs_2m_badge}{rs_3m_badge}{rs_trend_badge}</div><div style="display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 8px;">{rs_rsi_badge}{crossover_badge}</div><div style="display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 10px;">{obv_badge}{daily_rsi_badge}</div><div style="margin-top: auto;"><div style="font-size: 11px; color: #666; line-height: 1.4; border-top: 1px solid #e0e0e0; padding-top: 8px;">{description_escaped}</div></div></div>'''
                 
                 st.markdown(card_html, unsafe_allow_html=True)
                 
@@ -1401,24 +1475,34 @@ st.markdown("## 📚 Methodology & Rating System")
 
 st.markdown("""
 <div class="material-card elevation-2" style="padding: 1.5rem; margin-bottom: 1rem;">
-<h3>🎯 Relative Strength Analysis</h3>
+<h3>🎯 Multi-Period Relative Strength Analysis</h3>
 
-**Core Concept - Comparative Relative Strength (CRS):**
-- **CRS Formula**: (Stock's % Change) / (Benchmark's % Change)
-- **Interpretation**:
-  - CRS > 1.0: Stock is **outperforming** the market
-  - CRS < 1.0: Stock is **underperforming** the market
-  - CRS = 1.0: Stock moves **in line** with the market
+**Core Concept - Triple Timeframe Momentum:**
+- **1M RS**: (Stock's 21-day ROC) / (VNINDEX's 21-day ROC) - **Short-term**
+- **2M RS**: (Stock's 42-day ROC) / (VNINDEX's 42-day ROC) - **Medium-term**
+- **3M RS**: (Stock's 63-day ROC) / (VNINDEX's 63-day ROC) - **Longer-term**
 
-**Example:**
-- Stock gains +10%, VNINDEX gains +5%
-- CRS = 1.10 / 1.05 = 1.048 (Outperforming by 4.8%)
+**Composite RS Formula:**
+- Weighted Average: (1M × 50%) + (2M × 30%) + (3M × 20%)
+- Emphasizes recent momentum while validating with longer trends
 
-**Why CRS Matters:**
-- Strong stocks become stronger (momentum effect)
-- CRS identifies leadership before price breakouts
-- Best risk/reward in strongest stocks during bull markets
-- Measures **relative performance**, not absolute price
+**Interpretation:**
+- RS > 1.0: Stock's momentum is **outperforming** the market
+- RS < 1.0: Stock's momentum is **underperforming** the market
+- RS = 1.0: Moving **in line** with the market
+
+**Trend Signals:**
+- **🚀 Accelerating**: 1M > 2M > 3M (Building momentum - Best setup)
+- **📈 Strengthening**: 1M > 3M (Recent strength)
+- **↔️ Stable**: Consistent across periods
+- **📉 Weakening**: 1M < 3M (Losing momentum)
+- **⬇️ Decelerating**: 1M < 2M < 3M (Breaking down - Exit)
+
+**Why Multi-Period?**
+- **Confirms Momentum**: All periods aligned = high confidence
+- **Detects Changes**: Divergences show momentum shifts early
+- **Reduces Noise**: Filters false signals from single timeframe
+- **Better Ranking**: Compares tickers fairly across multiple horizons
 
 **RS Percentile Ranking:**
 - **Top 20% (RS ≥80%)**: List A - Strong Leaders, highest probability

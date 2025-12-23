@@ -8,18 +8,26 @@ from datetime import datetime, timedelta
 from typing import Dict, List, Tuple, Optional
 
 
-def calculate_relative_strength(stock_close: pd.Series, vnindex_close: pd.Series, method: str = 'price_ratio') -> pd.Series:
+def calculate_relative_strength(stock_close: pd.Series, vnindex_close: pd.Series, method: str = 'momentum', lookback: int = 63) -> pd.Series:
     """
-    Calculate Relative Strength using Comparative Relative Strength (CRS) formula.
+    Calculate Relative Strength capturing short/medium-term momentum.
     
-    CRS = (Stock's % Change) / (Benchmark's % Change)
-    A value > 1 means the stock is outperforming the benchmark.
-    A value < 1 means it's underperforming.
+    Methods:
+    - 'momentum': Rolling rate of change - captures recent momentum (RECOMMENDED)
+      RS = (Stock ROC) / (Benchmark ROC) over lookback period
+    - 'percentage': Cumulative performance from start (legacy CRS)
+    - 'price_ratio': Simple price ratio (legacy)
+    
+    Common lookback periods:
+    - 21 days: 1 month (short-term momentum)
+    - 42 days: 2 months (medium-term momentum)
+    - 63 days: 3 months (longer-term momentum)
     
     Args:
         stock_close: Stock closing prices
         vnindex_close: VNINDEX closing prices (aligned dates)
-        method: 'percentage' for CRS formula (recommended), 'price_ratio' for legacy
+        method: Calculation method ('momentum', 'percentage', 'price_ratio')
+        lookback: Period for momentum calculation (default: 63 days for 3-month)
     
     Returns:
         Series of RS values
@@ -33,25 +41,109 @@ def calculate_relative_strength(stock_close: pd.Series, vnindex_close: pd.Series
     if aligned.empty:
         return pd.Series([np.nan] * len(stock_close), index=stock_close.index)
     
-    if method == 'percentage':
-        # Comparative Relative Strength (CRS) - Correct formula
-        # Calculate percentage change from first value
+    if method == 'momentum':
+        # Rolling momentum-based RS (captures short/medium-term trends)
+        # Calculate rate of change over lookback period
+        stock_roc = aligned['stock'].pct_change(periods=lookback)
+        vnindex_roc = aligned['vnindex'].pct_change(periods=lookback)
+        
+        # RS = (1 + stock_roc) / (1 + vnindex_roc)
+        # This shows relative momentum: >1 = outperforming, <1 = underperforming
+        rs = (1 + stock_roc) / (1 + vnindex_roc)
+        
+        # For early periods without enough data, use simple price ratio
+        rs[:lookback] = aligned['stock'][:lookback] / aligned['vnindex'][:lookback]
+        
+    elif method == 'percentage':
+        # Cumulative performance from first value (legacy CRS)
         stock_pct_change = (aligned['stock'] / aligned['stock'].iloc[0]) - 1
         vnindex_pct_change = (aligned['vnindex'] / aligned['vnindex'].iloc[0]) - 1
         
         # Handle division by zero
         vnindex_pct_change = vnindex_pct_change.replace(0, np.nan)
         
-        # CRS = Stock % Change / Benchmark % Change
-        # Convert to ratio format: (1 + stock_pct) / (1 + vnindex_pct)
+        # CRS = (1 + stock_pct) / (1 + vnindex_pct)
         rs = (1 + stock_pct_change) / (1 + vnindex_pct_change)
+        
     else:
-        # Legacy price ratio method (less accurate)
+        # Legacy price ratio method
         if (aligned['vnindex'] == 0).any():
             return pd.Series([np.nan] * len(stock_close), index=stock_close.index)
         rs = aligned['stock'] / aligned['vnindex']
     
     return rs.reindex(stock_close.index)
+
+
+def calculate_multi_period_rs(stock_close: pd.Series, vnindex_close: pd.Series) -> Dict:
+    """
+    Calculate RS across multiple time periods (1M, 2M, 3M).
+    
+    Returns current RS values for each period plus composite score.
+    
+    Args:
+        stock_close: Stock closing prices
+        vnindex_close: VNINDEX closing prices
+    
+    Returns:
+        Dictionary with rs_1m, rs_2m, rs_3m, rs_composite, and trend
+    """
+    # Calculate RS for each period
+    rs_1m = calculate_relative_strength(stock_close, vnindex_close, method='momentum', lookback=21)
+    rs_2m = calculate_relative_strength(stock_close, vnindex_close, method='momentum', lookback=42)
+    rs_3m = calculate_relative_strength(stock_close, vnindex_close, method='momentum', lookback=63)
+    
+    # Get current values
+    rs_1m_current = rs_1m.iloc[-1] if not rs_1m.empty else np.nan
+    rs_2m_current = rs_2m.iloc[-1] if not rs_2m.empty else np.nan
+    rs_3m_current = rs_3m.iloc[-1] if not rs_3m.empty else np.nan
+    
+    # Calculate composite RS (weighted average: 1M=50%, 2M=30%, 3M=20%)
+    # Emphasize recent momentum
+    valid_values = []
+    weights = []
+    
+    if not np.isnan(rs_1m_current):
+        valid_values.append(rs_1m_current)
+        weights.append(0.5)
+    if not np.isnan(rs_2m_current):
+        valid_values.append(rs_2m_current)
+        weights.append(0.3)
+    if not np.isnan(rs_3m_current):
+        valid_values.append(rs_3m_current)
+        weights.append(0.2)
+    
+    if valid_values:
+        # Normalize weights
+        total_weight = sum(weights)
+        normalized_weights = [w / total_weight for w in weights]
+        rs_composite = sum(v * w for v, w in zip(valid_values, normalized_weights))
+    else:
+        rs_composite = np.nan
+    
+    # Determine trend (accelerating/decelerating/stable)
+    trend = "N/A"
+    if not np.isnan(rs_1m_current) and not np.isnan(rs_3m_current):
+        if rs_1m_current > rs_2m_current > rs_3m_current:
+            trend = "Accelerating"  # Getting stronger
+        elif rs_1m_current < rs_2m_current < rs_3m_current:
+            trend = "Decelerating"  # Getting weaker
+        elif rs_1m_current > rs_3m_current:
+            trend = "Strengthening"
+        elif rs_1m_current < rs_3m_current:
+            trend = "Weakening"
+        else:
+            trend = "Stable"
+    
+    return {
+        'rs_1m': rs_1m_current,
+        'rs_2m': rs_2m_current,
+        'rs_3m': rs_3m_current,
+        'rs_composite': rs_composite,
+        'rs_trend': trend,
+        'rs_1m_series': rs_1m,
+        'rs_2m_series': rs_2m,
+        'rs_3m_series': rs_3m
+    }
 
 
 def calculate_rs_ema_slope(rs: pd.Series, period: int = 10, lookback: int = 3) -> float:
