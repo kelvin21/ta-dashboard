@@ -635,12 +635,14 @@ for result in results:
         result['description'] = 'Middle Range RS'
         result['performance_type'] = 'neutral'
 
-# Split into outperforming and underperforming
+# Split into outperforming, middle ground, and underperforming
 outperforming_results = [r for r in results if r['performance_type'] == 'outperforming']
+middle_ground_results = [r for r in results if r['performance_type'] == 'neutral']
 underperforming_results = [r for r in results if r['performance_type'] == 'underperforming']
 
 # Filter by minimum RS percentile
 outperforming_filtered = [r for r in outperforming_results if r['rs_percentile'] >= min_percentile]
+middle_ground_filtered = middle_ground_results  # No percentile filter for middle ground
 underperforming_filtered = [r for r in underperforming_results if r['rs_percentile'] <= (100 - min_percentile)]
 
 # Apply crossover filter to outperforming
@@ -728,9 +730,10 @@ if summary_parts:
 
 st.markdown("---")
 
-# Create tabs for Outperforming vs Underperforming
-tab1, tab2 = st.tabs([
+# Create tabs for Outperforming, Middle Ground, and Underperforming
+tab1, tab2, tab3 = st.tabs([
     f"🚀 Outperforming Leaders ({len(outperforming_filtered)})",
+    f"⚖️ Middle Ground ({len(middle_ground_filtered)})",
     f"📉 Underperforming Laggards ({len(underperforming_filtered)})"
 ])
 
@@ -952,8 +955,188 @@ with tab1:
         # Add spacing after cards
         st.markdown("")
 
-# TAB 2: UNDERPERFORMING
+# TAB 2: MIDDLE GROUND
 with tab2:
+    if not middle_ground_filtered:
+        st.info(f"No middle ground stocks found.")
+    else:
+        st.markdown(f"### {len(middle_ground_filtered[:100])} Neutral Performers")
+        st.caption("Sorted by RS percentile - stocks performing in line with market (30-70% RS)")
+        st.markdown("")
+        
+        # Display middle ground stocks in card format
+        cols_per_row = 4
+        for idx, result in enumerate(middle_ground_filtered[:100], start=1):  # Limit to 100
+            if (idx - 1) % cols_per_row == 0:
+                cols = st.columns(cols_per_row, gap="medium")
+            
+            col = cols[(idx - 1) % cols_per_row]
+            
+            with col:
+                # Determine momentum badge for neutral
+                momentum_badge = "Neutral"
+                momentum_color = "#9E9E9E"  # Gray for neutral
+                if result['rs_percentile'] >= 60:
+                    momentum_badge = "Above Average"
+                    momentum_color = "#2196F3"
+                elif result['rs_percentile'] >= 50:
+                    momentum_badge = "Average"
+                    momentum_color = "#00BCD4"
+                elif result['rs_percentile'] >= 40:
+                    momentum_badge = "Slightly Below"
+                    momentum_color = "#FF9800"
+                else:
+                    momentum_badge = "Below Average"
+                    momentum_color = "#FFC107"
+                
+                # Calculate strength rating with momentum adjustment
+                base_rating = int((result['rs_percentile'] / 100) * 5)
+                
+                # Adjust rating based on RS momentum
+                rs_ma20_value = result.get('rs_ma20', 0)
+                if not np.isnan(rs_ma20_value) and rs_ma20_value != 0:
+                    rs_momentum = ((result['rs_current'] - rs_ma20_value) / rs_ma20_value * 100)
+                    if rs_momentum > 5:
+                        base_rating += 1
+                    elif rs_momentum > 2:
+                        base_rating += 0.5
+                    elif rs_momentum < -5:
+                        base_rating -= 1
+                    elif rs_momentum < -2:
+                        base_rating -= 0.5
+                
+                strength_rating = max(1, min(5, int(base_rating) + 1))
+                stars = "⭐" * strength_rating
+                
+                # Determine arrow direction
+                arrow = "↑" if result['rs_current'] > result.get('rs_ma20', result['rs_current']) else "↓"
+                arrow_color = "#4CAF50" if arrow == "↑" else "#FF9800"
+                
+                # Warning badge for borderline cases
+                warning_badge = ""
+                dist_pct = result.get('rs_distance_pct', 0)
+                if not np.isnan(dist_pct) and abs(dist_pct) > 8:
+                    if dist_pct > 0:
+                        warning_badge = '<div style="display: flex; align-items: center; gap: 4px; color: #2196F3; font-size: 12px; margin-top: 4px;"><i class="fas fa-info-circle"></i><span>Breaking Higher</span></div>'
+                    else:
+                        warning_badge = '<div style="display: flex; align-items: center; gap: 4px; color: #FF9800; font-size: 12px; margin-top: 4px;"><i class="fas fa-exclamation-triangle"></i><span>Weakening</span></div>'
+                
+                # RS status indicator
+                rs_ma20_value = result.get('rs_ma20', 0)
+                if not np.isnan(rs_ma20_value):
+                    rs_diff_pct = ((result['rs_current'] - rs_ma20_value) / rs_ma20_value * 100) if rs_ma20_value != 0 else 0
+                    rs_status_text = f"S: RS MA20 ({rs_diff_pct:+.1f}%)"
+                else:
+                    rs_status_text = "S: RS MA20 (N/A)"
+                
+                # Build description
+                description_parts = []
+                if result['rs_percentile'] >= 60:
+                    description_parts.append("Above average performer")
+                elif result['rs_percentile'] >= 50:
+                    description_parts.append("In line with market")
+                elif result['rs_percentile'] >= 40:
+                    description_parts.append("Slightly lagging market")
+                else:
+                    description_parts.append("Below market average")
+                
+                description = result.get('description', 'Middle Range RS')
+                if description_parts:
+                    description += " • " + " • ".join(description_parts)
+                
+                ticker_escaped = html.escape(result['ticker'])
+                description_escaped = html.escape(description)
+                
+                # Visual signal badges
+                rs_perc_badge = f'<span style="background: {momentum_color}; color: white; padding: 2px 8px; border-radius: 8px; font-size: 10px; font-weight: bold;">RS: {result["rs_percentile"]:.0f}%</span>'
+                
+                # 5-day RS momentum badge
+                rs_5d_change = result.get('rs_5d_change', np.nan)
+                if not np.isnan(rs_5d_change):
+                    if rs_5d_change > 0:
+                        momentum_5d_badge = f'<span style="background: #4CAF50; color: white; padding: 2px 8px; border-radius: 8px; font-size: 10px; font-weight: bold;">5D: +{rs_5d_change:.1f}% ▲</span>'
+                    else:
+                        momentum_5d_badge = f'<span style="background: #F44336; color: white; padding: 2px 8px; border-radius: 8px; font-size: 10px; font-weight: bold;">5D: {rs_5d_change:.1f}% ▼</span>'
+                else:
+                    momentum_5d_badge = '<span style="background: #9E9E9E; color: white; padding: 2px 8px; border-radius: 8px; font-size: 10px; font-weight: bold;">5D: N/A</span>'
+                
+                # RS RSI badge
+                rs_rsi_value = result.get('rs_rsi', np.nan)
+                if not np.isnan(rs_rsi_value):
+                    if rs_rsi_value >= 70:
+                        rs_rsi_badge = f'<span style="background: #FF9800; color: white; padding: 2px 8px; border-radius: 8px; font-size: 10px; font-weight: bold;">RS RSI: {rs_rsi_value:.0f} 🔶</span>'
+                    elif rs_rsi_value <= 30:
+                        rs_rsi_badge = f'<span style="background: #4CAF50; color: white; padding: 2px 8px; border-radius: 8px; font-size: 10px; font-weight: bold;">RS RSI: {rs_rsi_value:.0f} 🟢</span>'
+                    else:
+                        rs_rsi_badge = f'<span style="background: #2196F3; color: white; padding: 2px 8px; border-radius: 8px; font-size: 10px; font-weight: bold;">RS RSI: {rs_rsi_value:.0f} 🔵</span>'
+                else:
+                    rs_rsi_badge = '<span style="background: #9E9E9E; color: white; padding: 2px 8px; border-radius: 8px; font-size: 10px; font-weight: bold;">RS RSI: N/A</span>'
+                
+                # Crossover status badge
+                crossover_status = result.get('rs_crossover_status', 'N/A')
+                if 'Bullish' in crossover_status:
+                    crossover_badge = f'<span style="background: #4CAF50; color: white; padding: 2px 8px; border-radius: 8px; font-size: 10px; font-weight: bold;">{crossover_status} ✓</span>'
+                elif 'Near' in crossover_status:
+                    crossover_badge = f'<span style="background: #FF9800; color: white; padding: 2px 8px; border-radius: 8px; font-size: 10px; font-weight: bold;">{crossover_status} ⚠</span>'
+                elif 'Above' in crossover_status:
+                    crossover_badge = f'<span style="background: #2196F3; color: white; padding: 2px 8px; border-radius: 8px; font-size: 10px; font-weight: bold;">{crossover_status} ↑</span>'
+                else:
+                    crossover_badge = f'<span style="background: #9E9E9E; color: white; padding: 2px 8px; border-radius: 8px; font-size: 10px; font-weight: bold;">{crossover_status} ↓</span>'
+                
+                # OBV badge
+                obv_status = result.get('obv_status', 'N/A')
+                if obv_status == 'Above EMA':
+                    obv_badge = '<span style="background: #4CAF50; color: white; padding: 2px 8px; border-radius: 8px; font-size: 10px; font-weight: bold;">OBV: Strong 💪</span>'
+                elif obv_status == 'Below EMA':
+                    obv_badge = '<span style="background: #F44336; color: white; padding: 2px 8px; border-radius: 8px; font-size: 10px; font-weight: bold;">OBV: Weak ⚠</span>'
+                else:
+                    obv_badge = '<span style="background: #9E9E9E; color: white; padding: 2px 8px; border-radius: 8px; font-size: 10px; font-weight: bold;">OBV: N/A</span>'
+                
+                # Daily RSI badge
+                rsi_daily = result.get('rsi_daily', np.nan)
+                if not np.isnan(rsi_daily):
+                    if rsi_daily >= 70:
+                        daily_rsi_badge = f'<span style="background: #FF9800; color: white; padding: 2px 8px; border-radius: 8px; font-size: 10px; font-weight: bold;">Daily RSI: {rsi_daily:.0f} 🔶</span>'
+                    elif rsi_daily <= 30:
+                        daily_rsi_badge = f'<span style="background: #4CAF50; color: white; padding: 2px 8px; border-radius: 8px; font-size: 10px; font-weight: bold;">Daily RSI: {rsi_daily:.0f} 🟢</span>'
+                    else:
+                        daily_rsi_badge = f'<span style="background: #2196F3; color: white; padding: 2px 8px; border-radius: 8px; font-size: 10px; font-weight: bold;">Daily RSI: {rsi_daily:.0f} 🔵</span>'
+                else:
+                    daily_rsi_badge = '<span style="background: #9E9E9E; color: white; padding: 2px 8px; border-radius: 8px; font-size: 10px; font-weight: bold;">Daily RSI: N/A</span>'
+                
+                # Create card HTML with neutral styling
+                card_html = f'''<div style="border: 1px solid #BDBDBD; border-radius: 12px; padding: 14px; background: white; box-shadow: 0 2px 8px rgba(158,158,158,0.2); margin-bottom: 16px; min-height: 320px; display: flex; flex-direction: column;"><div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;"><div style="display: flex; align-items: center; gap: 8px;"><span style="font-size: 18px; font-weight: bold; color: #616161;">{ticker_escaped}</span><span style="font-size: 16px; color: {arrow_color};">{arrow}</span></div><div style="text-align: right; font-size: 14px;">{stars}</div></div><div style="margin-bottom: 10px;"><span style="background: {momentum_color}; color: white; padding: 3px 10px; border-radius: 12px; font-size: 11px; font-weight: 500;">⚖ {momentum_badge}</span>{warning_badge}</div><div style="font-size: 28px; font-weight: bold; color: #616161; margin-bottom: 8px;">{result['close']:.2f}</div><div style="font-size: 12px; color: #666; margin-bottom: 8px;">{rs_status_text}</div><div style="display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 8px;">{rs_perc_badge}{momentum_5d_badge}</div><div style="display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 8px;">{rs_rsi_badge}{crossover_badge}</div><div style="display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 10px;">{obv_badge}{daily_rsi_badge}</div><div style="margin-top: auto;"><div style="font-size: 11px; color: #666; line-height: 1.4; border-top: 1px solid #BDBDBD; padding-top: 8px;">{description_escaped}</div></div></div>'''
+                
+                st.markdown(card_html, unsafe_allow_html=True)
+                
+                # Add chart expander below the card
+                with st.expander(f"📊 View RS Chart for {result['ticker']}", expanded=False):
+                    chart = create_rs_chart(result['ticker'], analysis_datetime, vnindex_data)
+                    if chart:
+                        st.plotly_chart(
+                            chart, 
+                            use_container_width=True,
+                            config={
+                                'displayModeBar': True,
+                                'displaylogo': False,
+                                'modeBarButtonsToAdd': ['toggleSpikelines'],
+                                'toImageButtonOptions': {
+                                    'format': 'png',
+                                    'filename': f'{result["ticker"]}_RS_chart',
+                                    'height': 1200,
+                                    'width': 1600,
+                                    'scale': 2
+                                }
+                            }
+                        )
+                    else:
+                        st.warning("Unable to generate chart - insufficient data")
+        
+        # Add spacing after cards
+        st.markdown("")
+
+# TAB 3: UNDERPERFORMING
+with tab3:
     if not underperforming_filtered:
         st.info(f"No underperforming stocks found.")
     else:
