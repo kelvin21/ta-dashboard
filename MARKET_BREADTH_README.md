@@ -1,156 +1,453 @@
-# Market Breadth – Fast Vectorized Implementation
+# Market Breadth Analysis Implementation
 
 ## Overview
+This implementation adds a comprehensive Market Breadth Analysis sub-page to the MACD Reversal Dashboard, providing advanced technical indicators and market-wide sentiment analysis for the Vietnamese stock market.
 
-This document describes a **fast, vectorized** implementation of market breadth
-for the MACD Reversal Dashboard, using `pandas_ta` and grouped operations on a
-multi-ticker DataFrame. The goal is to avoid Python loops and compute breadth
-indicators (e.g. "% of stocks above SMA(50)") in a single pass over the data.
+## Components Created
 
-The same pattern can be extended to EMA breadth, RSI breadth, MACD stage
-distributions, etc., and the results can be stored in MongoDB via
-`db_adapter.py` / `utils/db_async.py`.
+### 1. Utility Modules (`utils/`)
 
----
+#### `utils/indicators.py`
+- **Purpose**: Technical indicator calculations using TA-Lib (with pandas fallback)
+- **Features**:
+  - EMA/SMA calculations (10, 20, 50, 100, 200 periods)
+  - RSI calculation (Wilder's smoothing method)
+  - MACD calculation (12, 26, 9 parameters)
+  - Bollinger Bands (20 period, 2 std dev)
+  - Batch indicator calculation function
+  - RSI categorization helper functions
+  
+#### `utils/macd_stage.py`
+- **Purpose**: MACD histogram stage detection and categorization
+- **Features**:
+  - 6-stage MACD detection:
+    1. Troughing (below zero, declining momentum)
+    2. Confirmed Trough (crossing from negative to positive)
+    3. Rising above Zero (positive and strengthening)
+    4. Peaking (above zero, declining momentum)
+    5. Confirmed Peak (crossing from positive to negative)
+    6. Falling below Zero (negative and weakening)
+  - Stage categorization helpers
+  - Color coding for visualization
+  - Numeric scoring for sentiment analysis
 
-## Core Idea: Vectorized Breadth with `pandas_ta`
+#### `utils/db_async.py`
+- **Purpose**: Async MongoDB operations using Motor
+- **Features**:
+  - Async database adapter class
+  - Price data loading
+  - Indicator storage and retrieval
+  - Market breadth history management
+  - Trading date utilities
+  - Synchronous fallback adapter (pymongo)
+  - Market breadth 
 
-- **Input**: a tidy/multi-index-friendly DataFrame with:
-  - columns: at minimum `Date`, `Ticker`, `Adj Close`
-  - index: either simple RangeIndex, or a MultiIndex `(Date, Ticker)`
-- **Per‑ticker indicators**: computed with `groupby('Ticker')` +
-  `.transform(...)` so they remain aligned with the original rows.
-- **Breadth**: computed with `groupby('Date')` on boolean masks and taking the
-  mean, which is the fraction of tickers satisfying a condition on that date.
+### 2. Market Breadth Page Integration
 
-### Example: % of Stocks Above SMA(50)
+The existing `pages/1_📊_Market_Breadth.py` has been enhanced with:
+- Optional integration with new utility modules
+- Backward compatibility with existing functions
+- Improved TA-Lib support detection
 
-```python
-import pandas as pd
-import pandas_ta as ta
+## Architecture
 
-# df columns required: 'Date', 'Ticker', 'Adj Close'
-# It can be index=RangeIndex, or a MultiIndex (Date, Ticker).
-
-def calculate_breadth_speedy(df: pd.DataFrame) -> pd.Series:
-    # Ensure we have explicit Date / Ticker columns for grouping
-    if isinstance(df.index, pd.MultiIndex):
-        if "Date" not in df.columns:
-            df = df.reset_index()  # brings MultiIndex levels into columns
-
-    # 1) Per‑ticker SMA(50), fully vectorized
-    df["SMA50"] = (
-        df.groupby("Ticker")["Adj Close"]
-          .transform(lambda x: x.ta.sma(50))
-    )
-
-    # 2) Boolean mask: stock above its own SMA(50) on each day
-    df["AboveSMA50"] = df["Adj Close"] > df["SMA50"]
-
-    # 3) Breadth: percentage of stocks above SMA(50) by date
-    #    mean() on a boolean Series → fraction of True values
-    breadth_indicator = df.groupby("Date")["AboveSMA50"].mean() * 100.0
-
-    return breadth_indicator  # pd.Series indexed by Date
+```
+macd-reversal/
+├── utils/
+│   ├── __init__.py
+│   ├── indicators.py          # Technical indicator calculations
+│   ├── macd_stage.py          # MACD stage detection
+│   └── db_async.py            # Async MongoDB operations
+├── pages/
+│   └── 1_📊_Market_Breadth.py # Market breadth analysis page
+├── ta_dashboard.py            # Main dashboard (existing)
+├── db_adapter.py              # Database adapter (existing)
+└── build_price_db.py          # Data builder (existing)
 ```
 
-**Key properties:**
+## Functional Requirements Implemented
 
-- **No Python loops over tickers or dates** – everything is done with
-  `groupby().transform()` and `groupby().mean()` in C-optimized Pandas code.
-- **O(N)** over number of rows, independent of the number of tickers.
-- Naturally handles:
-  - missing data for some tickers on some dates,
-  - adding/removing tickers (e.g. IPOs, delistings).
+### ✅ Page Structure
+- [x] Control Panel with date selection
+- [x] Market Breadth Summary tables
+- [x] Indicator basket groups with ticker lists
+- [x] VNINDEX Technical Chart
+- [x] 1-Year Market Breadth Historical Charts
+- [x] Debug view for indicators
 
----
+### ✅ Indicator Calculation
+- [x] EMA: 10, 20, 50, 100, 200 periods
+- [x] RSI(14) with Wilder's smoothing
+- [x] MACD(12,26,9) with histogram
+- [x] Bollinger Bands(20,2)
+- [x] MACD stage detection (6 stages)
+- [x] Uses TA-Lib when available (most accurate)
+- [x] Pandas fallback for missing TA-Lib
 
-## Integrating with the Existing Architecture
+### ✅ Market Breadth Metrics
+- [x] MA/EMA breadth (% above each period)
+- [x] RSI breadth (oversold/undersold/overbought categories)
+- [x] MACD stage distribution (6 stages)
+- [x] Historical breadth tracking
+- [x] Sentiment scoring (bullish/bearish signals)
 
-### Data Flow
+### ✅ Data Management
+- [x] MongoDB integration (via db_adapter.py)
+- [x] SQLite fallback support
+- [x] Async batch processing for historical calculations
+- [x] Indicator caching in database
+- [x] Market breadth history storage
 
-- **Source price data**:
-  - Loaded from MongoDB `price_data` (via `db_adapter.py` or `utils/db_async.py`)
-    into a DataFrame with columns like:
-    - `date` (datetime), `ticker`, `close` / `adj_close`, `volume`, etc.
-  - For the snippet above, you map to:
-    - `Date`  ← `date`
-    - `Ticker` ← `ticker`
-    - `Adj Close` ← `close` or `adj_close` (depending on your schema)
+### ✅ Visualization
+- [x] Interactive Plotly charts
+- [x] Multi-panel VNINDEX technical chart
+- [x] Breadth trend charts (1-year history)
+- [x] Synchronized hover across subplots
+- [x] Peak/bottom region shading
+- [x] Responsive layouts
 
-- **Breadth calculation**:
-  - Build a single DataFrame for the full universe and date range.
-  - Call `calculate_breadth_speedy(df_mapped)` to get a `pd.Series`:
-    - index: `Date`
-    - value: `% of stocks above SMA(50)` on that date.
+### ✅ User Interface
+- [x] Date picker for historical snapshots
+- [x] Recalculation controls
+- [x] Indicator selection filters
+- [x] Expandable ticker lists
+- [x] Debug mode
+- [x] CSV data export
 
-- **Storage**:
-  - Either keep this Series in memory for the current Streamlit session, or
-  - Persist into a `market_breadth` collection, e.g.:
+## Dependencies
 
+### Required
+- `streamlit` - Web application framework
+- `pandas` - Data manipulation
+- `numpy` - Numerical operations
+- `plotly` - Interactive charts
+- `pymongo` - MongoDB driver (sync)
+- `python-dotenv` - Environment variable management
+
+### Optional (Recommended)
+- `talib` - Technical Analysis Library (most accurate indicators)
+- `motor` - Async MongoDB driver
+- `aiohttp` - Async HTTP client
+
+### Installation
+
+```bash
+# Core dependencies
+pip install streamlit pandas numpy plotly pymongo python-dotenv
+
+# Optional - for best performance
+pip install TA-Lib motor aiohttp
+
+# Note: TA-Lib requires compilation. See: https://github.com/mrjbq7/ta-lib
+```
+
+## Configuration
+
+### Environment Variables (.env)
+
+```env
+# MongoDB Configuration
+USE_MONGODB=true
+MONGODB_URI=mongodb+srv://user:password@cluster.mongodb.net/?appName=AppName
+MONGODB_DB_NAME=macd_reversal
+
+# Database Paths (if using SQLite)
+PRICE_DB_PATH=price_data.db
+REF_DB_PATH=analysis_results.db
+
+# Feature Flags
+SHOW_MARKET_BREADTH_PAGE=true
+SHOW_MODULE_WARNINGS=false
+
+# Cache Settings
+CACHE_TTL=1800
+```
+
+## Usage
+
+### Running the Dashboard
+
+```bash
+# Start the main dashboard
+streamlit run ta_dashboard.py
+
+# Access Market Breadth page from sidebar navigation
+```
+
+### Calculating Historical Breadth
+
+1. Navigate to Market Breadth page
+2. Enable "Recalculate historical indicators" in sidebar
+3. Set lookback period (default: 200 trading days)
+4. Click "Calculate Now"
+5. View results in historical charts section
+
+### Viewing Historical Snapshots
+
+1. Enable "View specific date snapshot" in sidebar
+2. Select date from date picker
+3. View breadth metrics for that date
+4. Compare with current market conditions
+
+### Exporting Data
+
+- Click "Download Summary CSV" for breadth metrics
+- Click "Download Detailed Data CSV" for individual ticker indicators
+- Click "Download Debug Table" (debug mode) for full calculation details
+
+## Data Schema
+
+### MongoDB Collections
+
+#### `indicators` Collection
 ```javascript
 {
+  ticker: "VCB",
   date: ISODate("2025-12-08"),
-  above_sma50_pct: 56.7,
-  total_tickers: 150,
+  close: 95.5,
+  ema10: 94.2,
+  ema20: 93.8,
+  ema50: 92.1,
+  ema100: 90.5,
+  ema200: 88.3,
+  rsi: 65.4,
+  macd: 1.23,
+  macd_signal: 1.15,
+  macd_hist: 0.08,
+  macd_stage: "3. Rising above Zero",
+  bb_upper: 98.5,
+  bb_middle: 95.0,
+  bb_lower: 91.5,
   updated_at: ISODate("2025-12-08T10:30:00Z")
 }
 ```
 
----
+#### `market_breadth` Collection
+```javascript
+{
+  date: ISODate("2025-12-08"),
+  total_tickers: 150,
+  above_ema10: 85,
+  above_ema10_pct: 56.7,
+  above_ema20: 78,
+  above_ema20_pct: 52.0,
+  // ... (all EMA periods)
+  rsi_oversold: 12,
+  rsi_oversold_pct: 8.0,
+  rsi_<50: 45,
+  rsi_<50_pct: 30.0,
+  // ... (all RSI categories)
+  macd_troughing: 8,
+  macd_confirmed_trough: 15,
+  macd_rising: 45,
+  // ... (all MACD stages)
+  updated_at: ISODate("2025-12-08T10:30:00Z")
+}
+```
 
-## Extending the Pattern to Other Breadth Metrics
+## Performance Optimization
 
-- **EMA breadth**: replace `x.ta.sma(50)` with `x.ta.ema(length)` for any period.
-- **Multiple windows**: compute several SMAs/EMAs in one function:
-  - `SMA20`, `SMA50`, `SMA200`, then produce 3 breadth series.
-- **RSI breadth**:
-  - `df["RSI14"] = df.groupby("Ticker")["Adj Close"].transform(lambda x: x.ta.rsi(14))`
-  - then `df["RSI_Oversold"] = df["RSI14"] < 30`, and group by `Date` as above.
-- **MACD stage counts**:
-  - compute MACD/Signal/Hist per ticker (via `pandas_ta.macd` or `utils/macd_stage.py`)
-  - map each row to a discrete stage (e.g. `"confirmed_trough"`)
-  - group by `Date` and `stage` and normalize to get distributions.
+### Caching Strategy
+- **Streamlit caching**: `@st.cache_data` for data loads (30 min TTL)
+- **Database indexing**: Compound indexes on (ticker, date)
+- **Async processing**: Concurrent calculation of multiple dates
+- **Batch operations**: Grouped database writes
 
-All of these can be implemented with the same pattern:
+### Async Processing
+- Uses `motor` for async MongoDB operations
+- Concurrent calculation of historical breadth
+- Progress tracking for long-running operations
+- Timeout protection (60 seconds per operation)
 
-- per‑ticker indicator: `groupby("Ticker").transform(...)`
-- daily breadth: `groupby("Date")` on boolean or categorical columns.
+### Memory Management
+- Streaming data processing (no full dataset in memory)
+- Limited ticker lists in UI (first 50 for debug)
+- Cleanup of temporary DataFrames
+- Efficient pandas operations
 
----
+## Troubleshooting
 
-## Usage in `1_📊_Market_Breadth.py`
+### TA-Lib Installation Issues
 
-- When recalculating historical breadth:
-  - Load the required window of `price_data` from MongoDB.
-  - Build a tidy DataFrame with `Date`, `Ticker`, `Adj Close`.
-  - Call the fast vectorized function(s) to compute breadth series.
-  - Optionally save results back to MongoDB for future sessions.
+**Windows:**
+```bash
+# Download wheel from: https://www.lfd.uci.edu/~gohlke/pythonlibs/#ta-lib
+pip install TA_Lib‑0.4.XX‑cpXX‑cpXX‑win_amd64.whl
+```
 
-- For interactive charts:
-  - Convert the breadth Series to a DataFrame:
+**Linux:**
+```bash
+wget http://prdownloads.sourceforge.net/ta-lib/ta-lib-0.4.0-src.tar.gz
+tar -xzf ta-lib-0.4.0-src.tar.gz
+cd ta-lib/
+./configure --prefix=/usr
+make
+sudo make install
+pip install TA-Lib
+```
+
+**macOS:**
+```bash
+brew install ta-lib
+pip install TA-Lib
+```
+
+### MongoDB Connection Issues
+
+1. Check `.env` file exists in project root
+2. Verify `MONGODB_URI` is correct
+3. Check network connectivity
+4. Increase timeout in `db_async.py` if needed
+5. Test connection: `python -c "from utils.db_async import get_sync_db_adapter; db = get_sync_db_adapter(); print(db.get_all_tickers())"`
+
+### Common Errors
+
+**Error: "No indicator data found"**
+- Solution: Run historical calculation first
+- Check date range in database
+- Verify tickers exist in price_data collection
+
+**Error: "TA-Lib not installed"**
+- Solution: Install TA-Lib or use manual calculations
+- Manual calculations are slower but functional
+- See TA-Lib installation guide above
+
+**Error: "motor not installed"**
+- Solution: Install motor for async support
+- Or use synchronous fallback (slower)
+- `pip install motor`
+
+## Testing
+
+### Unit Tests (Recommended)
 
 ```python
-breadth = calculate_breadth_speedy(df_prices)
-breadth_df = breadth.reset_index().rename(columns={"AboveSMA50": "above_sma50_pct"})
+# test_indicators.py
+import pytest
+from utils.indicators import calculate_ema, calculate_rsi, calculate_macd
+
+def test_ema_calculation():
+    data = pd.Series([100, 102, 101, 103, 105])
+    ema = calculate_ema(data, 3)
+    assert not ema.empty
+    assert ema.iloc[-1] > 100
+
+def test_rsi_calculation():
+    data = pd.Series([100, 102, 101, 103, 105, 103, 102, 104])
+    rsi = calculate_rsi(data, 7)
+    assert 0 <= rsi.iloc[-1] <= 100
+
+# Run tests
+pytest test_indicators.py
 ```
 
-  - Plot with Plotly as a time series, and overlay with VNINDEX.
+### Manual Testing Checklist
 
----
+- [ ] Load main dashboard successfully
+- [ ] Navigate to Market Breadth page
+- [ ] View current breadth metrics
+- [ ] Calculate historical breadth (small sample)
+- [ ] View historical charts
+- [ ] Select specific date
+- [ ] Export CSV data
+- [ ] Enable debug mode
+- [ ] Test with different date ranges
+- [ ] Verify VNINDEX chart displays correctly
 
-## Dependencies
+## Future Enhancements
 
-- **Required**:
-  - `pandas`
-  - `pandas_ta`
-- **Recommended** (existing project stack):
-  - `streamlit`, `plotly`, `pymongo`, `python-dotenv`
+### Planned Features
+- [ ] Real-time breadth updates during trading hours
+- [ ] Alert system for breadth thresholds
+- [ ] Sector-specific breadth analysis
+- [ ] Comparative breadth (vs. historical averages)
+- [ ] Machine learning breadth predictions
+- [ ] Custom indicator formulas
+- [ ] Advanced filtering (by sector, market cap, etc.)
+- [ ] Correlation analysis between breadth and index
 
-```bash
-pip install pandas pandas_ta
+### Performance Improvements
+- [ ] Redis caching layer
+- [ ] Incremental calculations (only new data)
+- [ ] Pre-computed breadth snapshots
+- [ ] Parallel processing for multiple tickers
+- [ ] Database query optimization
+- [ ] Frontend pagination for large datasets
+
+## API Reference
+
+### Indicators Module
+
+```python
+from utils.indicators import calculate_all_indicators
+
+# Calculate all indicators for a DataFrame
+df_with_indicators = calculate_all_indicators(
+    df=price_df,
+    ema_periods=[10, 20, 50, 100, 200],
+    rsi_period=14,
+    macd_params=(12, 26, 9),
+    bb_params=(20, 2.0)
+)
 ```
 
-This approach plugs into the existing MACD Reversal Dashboard without changing
-the UI, while making breadth calculations **significantly faster and more
-scalable** as the number of tickers and dates grows.
+### MACD Stage Module
+
+```python
+from utils.macd_stage import detect_macd_stage, categorize_macd_stage
+
+# Detect stage for histogram series
+stage = detect_macd_stage(macd_hist_series, lookback=20)
+# Returns: "2. Confirmed Trough"
+
+# Categorize for grouping
+category = categorize_macd_stage(stage)
+# Returns: "confirmed_trough"
+```
+
+### Async DB Module
+
+```python
+from utils.db_async import get_async_db_adapter
+import asyncio
+
+async def main():
+    db = get_async_db_adapter()
+    tickers = await db.get_all_tickers()
+    print(f"Found {len(tickers)} tickers")
+    
+    # Load price data
+    df = await db.get_price_data("VCB", start_date, end_date)
+    
+    # Save indicators
+    await db.save_indicators("VCB", date, indicators_dict)
+    
+    db.close()
+
+asyncio.run(main())
+```
+
+## Support
+
+For issues or questions:
+1. Check this README first
+2. Review error messages in debug mode
+3. Check Streamlit logs: `streamlit run ta_dashboard.py --logger.level=debug`
+4. Open GitHub issue with:
+   - Error message
+   - Steps to reproduce
+   - Environment details (OS, Python version, package versions)
+
+## License
+
+This implementation is part of the MACD Reversal Dashboard project.
+
+## Changelog
+
+### Version 1.0.0 (2025-12-08)
+- Initial implementation of Market Breadth Analysis
+- Created utility modules (indicators, macd_stage, db_async)
+- Integrated with existing Market Breadth page
+- Added TA-Lib support with fallback
+- Implemented async MongoDB operations
+- Added comprehensive documentation

@@ -579,69 +579,182 @@ with tab1:
         st.caption("Sorted by RS percentile - stocks with strongest relative performance")
         st.markdown("")
         
-        # Display outperforming stocks
+        # Display outperforming stocks in card format
+        # Create 3 columns for card layout
+        cols_per_row = 3
         for idx, result in enumerate(outperforming_filtered[:50], start=1):  # Limit to top 50
-            badge_class = f"chip-{result['badge_color']}"
-        
-        # Add crossover indicator to title
-        crossover_indicator = ""
-        if result.get('rs_crossover_signal') == 'Bullish Cross':
-            crossover_indicator = " 🚀"
-        elif result.get('rs_crossover_signal') == 'Near Bullish':
-            crossover_indicator = " 📈"
-        elif result.get('distribution_warning', False):
-            crossover_indicator = " ⚠️"
-        
-        # Create expandable card
-        for idx, result in enumerate(outperforming_filtered[:50], start=1):  # Limit to top 50
-            badge_class = f"chip-{result['badge_color']}"
+            if (idx - 1) % cols_per_row == 0:
+                cols = st.columns(cols_per_row)
             
-            # Add crossover indicator to title
-            crossover_indicator = ""
-            if result.get('rs_crossover_signal') == 'Bullish Cross':
-                crossover_indicator = " 🚀"
-            elif result.get('rs_crossover_signal') == 'Near Bullish':
-                crossover_indicator = " 📈"
-            elif result.get('distribution_warning', False):
-                crossover_indicator = " ⚠️"
+            col = cols[(idx - 1) % cols_per_row]
             
-            with st.expander(f"#{idx} | {result['ticker']}{crossover_indicator} | RS: {result['rs_percentile']:.1f}% | {result['list_class']}", expanded=(idx <= 3)):
-                col1, col2 = st.columns(2)
+            with col:
+                # Determine momentum badge
+                momentum_badge = ""
+                momentum_color = "#4CAF50"
+                if result.get('rs_crossover_signal') == 'Bullish Cross':
+                    momentum_badge = "Strong Momentum"
+                    momentum_color = "#4CAF50"
+                elif result.get('rs_crossover_signal') == 'Near Bullish':
+                    momentum_badge = "Building Momentum"
+                    momentum_color = "#2196F3"
+                elif result['rs_percentile'] >= 80:
+                    momentum_badge = "Strong Momentum"
+                    momentum_color = "#4CAF50"
+                elif result['rs_percentile'] >= 70:
+                    momentum_badge = "Good Momentum"
+                    momentum_color = "#2196F3"
+                else:
+                    momentum_badge = "Moderate"
+                    momentum_color = "#9E9E9E"
                 
-                with col1:
-                    st.markdown(f"**Price:** {result['close']:.2f}")
-                    st.markdown(f"**RS Percentile:** {result['rs_percentile']:.1f}%")
-                    st.markdown(f"**RS Value:** {result['rs_current']:.2f}")
-                    if show_rs_ma20 and not np.isnan(result.get('rs_ma20', np.nan)):
-                        st.markdown(f"**RS MA20:** {result['rs_ma20']:.2f}")
-                    if show_rs_indicators:
-                        if not np.isnan(result.get('rs_rsi', np.nan)):
-                            rs_rsi_color = '🔴' if result['rs_rsi'] > 70 else '🟢' if result['rs_rsi'] < 30 else '🟡'
-                            st.markdown(f"**RS RSI:** {rs_rsi_color} {result['rs_rsi']:.1f}")
-                        if not np.isnan(result.get('rs_distance_pct', np.nan)):
-                            st.markdown(f"**RS vs MA20:** {result['rs_distance_pct']:+.1f}%")
-                    st.markdown(f"**Classification:** `{result['list_class']}`")
+                # Calculate strength rating (1-5 stars)
+                strength_rating = min(5, max(1, int((result['rs_percentile'] / 100) * 5) + 1))
+                stars = "⭐" * strength_rating
+                
+                # Determine arrow direction
+                arrow = "↑" if result['rs_current'] > result.get('rs_ma20', result['rs_current']) else "↓"
+                arrow_color = "#4CAF50" if arrow == "↑" else "#F44336"
+                
+                # Distribution warning
+                warning_badge = ""
+                if result.get('distribution_warning', False):
+                    dist_pct = result.get('rs_distance_pct', 0)
+                    if not np.isnan(dist_pct) and abs(dist_pct) > 0:
+                        warning_badge = f"""
+                        <div style="display: flex; align-items: center; gap: 4px; color: #FF9800; font-size: 12px; margin-top: 4px;">
+                            <i class="fas fa-exclamation-triangle"></i>
+                            <span>{abs(dist_pct):.1f}% Tight</span>
+                        </div>
+                        """
+                
+                # RS status indicator
+                rs_status_text = ""
+                rs_ma20_value = result.get('rs_ma20', 0)
+                if not np.isnan(rs_ma20_value) and show_rs_ma20:
+                    rs_diff_pct = ((result['rs_current'] - rs_ma20_value) / rs_ma20_value * 100) if rs_ma20_value != 0 else 0
+                    rs_status_text = f"S: RS MA20 ({rs_diff_pct:+.1f}%)"
+                
+                # Violations check
+                violations_text = "No recent violations"
+                if result.get('distribution_warning', False):
+                    violations_text = result.get('distribution_reason', 'Overextended zone')
+                
+                # Build description text from analysis
+                description_parts = []
+                if result.get('rs_crossover_signal') == 'Bullish Cross':
+                    description_parts.append("Golden cross")
+                if result['rs_current'] > result.get('rs_ma20', 0):
+                    description_parts.append("bullish RS alignment")
+                if result['rs_percentile'] >= 80:
+                    description_parts.append("in BUY zone")
+                if result.get('rs_rsi', 50) < 70:
+                    description_parts.append("RSs converging")
+                if result.get('rs_crossover_signal') == 'Near Bullish':
+                    description_parts.append("breakout imminent")
+                
+                description_text = " - ".join(description_parts) if description_parts else result['description']
+                
+                # Button text based on list class
+                button_text = "BUY NOW" if result['list_class'] == 'List A' else "WATCH"
+                button_color = "#4CAF50" if result['list_class'] == 'List A' else "#2196F3"
+                
+                # Create card HTML
+                card_html = f"""
+                <div style="
+                    border: 1px solid #e0e0e0;
+                    border-radius: 12px;
+                    padding: 16px;
+                    background: white;
+                    box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+                    margin-bottom: 16px;
+                    height: 100%;
+                    position: relative;
+                ">
+                    <!-- Header with ticker and arrow -->
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                        <div style="display: flex; align-items: center; gap: 8px;">
+                            <span style="font-size: 20px; font-weight: bold; color: #1976D2;">{result['ticker']}</span>
+                            <span style="font-size: 18px; color: {arrow_color};">{arrow}</span>
+                        </div>
+                        <div style="text-align: right;">
+                            {stars}
+                        </div>
+                    </div>
                     
-                with col2:
-                    st.markdown(f"**Description:** {result['description']}")
+                    <!-- Momentum badge -->
+                    <div style="margin-bottom: 12px;">
+                        <span style="
+                            background: {momentum_color};
+                            color: white;
+                            padding: 4px 12px;
+                            border-radius: 12px;
+                            font-size: 12px;
+                            font-weight: 500;
+                        ">✓ {momentum_badge}</span>
+                        {warning_badge}
+                    </div>
                     
-                    # Distribution warning
-                    if result.get('distribution_warning', False):
-                        st.error(f"⚠️ **Overextended:** {result['distribution_reason']}")
+                    <!-- Price -->
+                    <div style="font-size: 32px; font-weight: bold; color: #1976D2; margin-bottom: 4px;">
+                        {result['close']:.2f}
+                    </div>
                     
-                    # Highlight crossover status
-                    crossover_status = result.get('rs_crossover_status', 'None')
-                    if '🚀' in crossover_status or '📈' in crossover_status:
-                        st.success(f"**RS Status:** {crossover_status}")
-                    elif '⚠️' in crossover_status:
-                        st.warning(f"**RS Status:** {crossover_status}")
-                    else:
-                        st.markdown(f"**RS Status:** {crossover_status}")
-                        
-                    if show_rsi and not np.isnan(result['rsi_daily']):
-                        st.markdown(f"**RSI (Daily):** {result['rsi_daily']:.1f}")
-                    if show_obv and result['obv_status'] != 'N/A':
-                        st.markdown(f"**OBV Status:** {result['obv_status']}")
+                    <!-- RS Status -->
+                    <div style="font-size: 13px; color: #666; margin-bottom: 8px;">
+                        {rs_status_text}
+                    </div>
+                    
+                    <!-- Strength and Violations -->
+                    <div style="font-size: 13px; color: #666; margin-bottom: 4px;">
+                        <strong>Strength:</strong> {strength_rating}/5
+                    </div>
+                    <div style="font-size: 13px; color: #666; margin-bottom: 12px;">
+                        {violations_text}
+                    </div>
+                    
+                    <!-- Buy Button -->
+                    <div style="margin-bottom: 12px;">
+                        <div style="
+                            background: {button_color};
+                            color: white;
+                            padding: 12px;
+                            border-radius: 8px;
+                            text-align: center;
+                            font-weight: bold;
+                            font-size: 14px;
+                        ">{button_text}</div>
+                    </div>
+                    
+                    <!-- Read Details Button -->
+                    <div style="margin-bottom: 12px;">
+                        <div style="
+                            background: #2196F3;
+                            color: white;
+                            padding: 8px;
+                            border-radius: 8px;
+                            text-align: center;
+                            font-size: 12px;
+                        ">READ RS MA20</div>
+                    </div>
+                    
+                    <!-- Description -->
+                    <div style="
+                        font-size: 12px;
+                        color: #666;
+                        line-height: 1.5;
+                        border-top: 1px solid #e0e0e0;
+                        padding-top: 12px;
+                    ">
+                        {description_text}
+                    </div>
+                </div>
+                """
+                
+                st.markdown(card_html, unsafe_allow_html=True)
+        
+        # Add spacing after cards
+        st.markdown("")
 
 # TAB 2: UNDERPERFORMING
 with tab2:
