@@ -249,6 +249,13 @@ def analyze_stock_leadership(ticker: str, analysis_date: datetime, vnindex_data:
     if distribution_warning:
         score -= 10  # Penalize overextended stocks
     
+    # Calculate 5-day RS momentum change
+    rs_5d_change = np.nan
+    if len(df) >= 6:
+        rs_5d_ago = df.iloc[-6]['rs'] if 'rs' in df.columns else np.nan
+        if not np.isnan(rs_5d_ago) and rs_5d_ago != 0:
+            rs_5d_change = ((rs_current - rs_5d_ago) / rs_5d_ago) * 100
+    
     return {
         'ticker': ticker,
         'close': current['close'],
@@ -263,6 +270,7 @@ def analyze_stock_leadership(ticker: str, analysis_date: datetime, vnindex_data:
         'rs_percentile': 0,  # Will update later
         'rsi_daily': rsi_daily,
         'obv_status': obv_status,
+        'rs_5d_change': rs_5d_change,  # Add 5-day momentum
         'score': score,
         'list_class': 'Monitor',
         'badge_color': 'gray',
@@ -687,23 +695,90 @@ with tab1:
                 # Escape HTML special characters in text
                 import html
                 description_escaped = html.escape(description_text)
-                violations_escaped = html.escape(violations_text)
                 ticker_escaped = html.escape(result['ticker'])
                 
-                # Additional stats for expandable section
-                rs_percentile_text = f"{result['rs_percentile']:.1f}%"
-                rs_value_text = f"{result['rs_current']:.2f}"
-                rs_ma20_text = f"{result.get('rs_ma20', 0):.2f}" if not np.isnan(result.get('rs_ma20', np.nan)) else "N/A"
-                rs_rsi_value = result.get('rs_rsi', np.nan)
-                rs_rsi_emoji = '🔴' if not np.isnan(rs_rsi_value) and rs_rsi_value > 70 else '🟢' if not np.isnan(rs_rsi_value) and rs_rsi_value < 30 else '🟡'
-                rs_rsi_text = f"{rs_rsi_emoji} {rs_rsi_value:.1f}" if not np.isnan(rs_rsi_value) else "N/A"
-                rs_distance_text = f"{result.get('rs_distance_pct', 0):+.1f}%" if not np.isnan(result.get('rs_distance_pct', np.nan)) else "N/A"
-                rsi_daily_text = f"{result['rsi_daily']:.1f}" if not np.isnan(result['rsi_daily']) else "N/A"
-                obv_status_text = result['obv_status']
-                crossover_status = result.get('rs_crossover_status', 'None')
+                # Create visual signal indicators
+                # RS Percentile indicator
+                rs_perc = result['rs_percentile']
+                if rs_perc >= 90:
+                    rs_perc_badge = f'<span style="background: #1B5E20; color: white; padding: 2px 8px; border-radius: 8px; font-size: 10px; font-weight: bold;">RS: {rs_perc:.0f}% 🔥</span>'
+                elif rs_perc >= 80:
+                    rs_perc_badge = f'<span style="background: #4CAF50; color: white; padding: 2px 8px; border-radius: 8px; font-size: 10px; font-weight: bold;">RS: {rs_perc:.0f}% ⬆️</span>'
+                elif rs_perc >= 70:
+                    rs_perc_badge = f'<span style="background: #2196F3; color: white; padding: 2px 8px; border-radius: 8px; font-size: 10px; font-weight: bold;">RS: {rs_perc:.0f}% 📈</span>'
+                else:
+                    rs_perc_badge = f'<span style="background: #9E9E9E; color: white; padding: 2px 8px; border-radius: 8px; font-size: 10px; font-weight: bold;">RS: {rs_perc:.0f}%</span>'
                 
-                # Create card HTML with expandable stats
-                card_html = f'''<div style="border: 1px solid #e0e0e0; border-radius: 12px; padding: 14px; background: white; box-shadow: 0 2px 8px rgba(0,0,0,0.1); margin-bottom: 16px; min-height: 350px; display: flex; flex-direction: column;"><div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;"><div style="display: flex; align-items: center; gap: 8px;"><span style="font-size: 18px; font-weight: bold; color: #1976D2;">{ticker_escaped}</span><span style="font-size: 16px; color: {arrow_color};">{arrow}</span></div><div style="text-align: right; font-size: 14px;">{stars}</div></div><div style="margin-bottom: 10px;"><span style="background: {momentum_color}; color: white; padding: 3px 10px; border-radius: 12px; font-size: 11px; font-weight: 500;">✓ {momentum_badge}</span>{warning_badge}</div><div style="font-size: 28px; font-weight: bold; color: #1976D2; margin-bottom: 6px;">{result['close']:.2f}</div><div style="font-size: 12px; color: #666; margin-bottom: 6px;">{rs_status_text}</div><div style="font-size: 12px; color: #666; margin-bottom: 3px;"><strong>Strength:</strong> {strength_rating}/5</div><div style="font-size: 11px; color: #666; margin-bottom: 10px;">{violations_escaped}</div><details style="font-size: 11px; color: #666; margin-bottom: 10px; cursor: pointer;"><summary style="font-weight: bold; margin-bottom: 6px;">📊 Detailed Stats</summary><div style="padding: 8px 0; line-height: 1.8;"><div><strong>RS Percentile:</strong> {rs_percentile_text}</div><div><strong>RS Value:</strong> {rs_value_text}</div><div><strong>RS MA20:</strong> {rs_ma20_text}</div><div><strong>RS RSI:</strong> {rs_rsi_text}</div><div><strong>RS vs MA20:</strong> {rs_distance_text}</div><div><strong>RS Status:</strong> {crossover_status}</div><div><strong>RSI (Daily):</strong> {rsi_daily_text}</div><div><strong>OBV Status:</strong> {obv_status_text}</div></div></details><div style="margin-top: auto;"><div style="font-size: 11px; color: #666; line-height: 1.4; border-top: 1px solid #e0e0e0; padding-top: 8px;">{description_escaped}</div></div></div>'''
+                # 5-day momentum indicator
+                rs_5d = result.get('rs_5d_change', np.nan)
+                if not np.isnan(rs_5d):
+                    if rs_5d >= 5:
+                        momentum_5d_badge = f'<span style="background: #4CAF50; color: white; padding: 2px 8px; border-radius: 8px; font-size: 10px; font-weight: bold;">5D: +{rs_5d:.1f}% 🚀</span>'
+                    elif rs_5d >= 2:
+                        momentum_5d_badge = f'<span style="background: #8BC34A; color: white; padding: 2px 8px; border-radius: 8px; font-size: 10px; font-weight: bold;">5D: +{rs_5d:.1f}% ↗️</span>'
+                    elif rs_5d >= 0:
+                        momentum_5d_badge = f'<span style="background: #FFC107; color: #333; padding: 2px 8px; border-radius: 8px; font-size: 10px; font-weight: bold;">5D: +{rs_5d:.1f}%</span>'
+                    elif rs_5d >= -2:
+                        momentum_5d_badge = f'<span style="background: #FF9800; color: white; padding: 2px 8px; border-radius: 8px; font-size: 10px; font-weight: bold;">5D: {rs_5d:.1f}%</span>'
+                    else:
+                        momentum_5d_badge = f'<span style="background: #F44336; color: white; padding: 2px 8px; border-radius: 8px; font-size: 10px; font-weight: bold;">5D: {rs_5d:.1f}% 🔻</span>'
+                else:
+                    momentum_5d_badge = '<span style="background: #9E9E9E; color: white; padding: 2px 8px; border-radius: 8px; font-size: 10px; font-weight: bold;">5D: N/A</span>'
+                
+                # RS RSI indicator
+                rs_rsi_value = result.get('rs_rsi', np.nan)
+                if not np.isnan(rs_rsi_value):
+                    if rs_rsi_value > 70:
+                        rs_rsi_badge = f'<span style="background: #F44336; color: white; padding: 2px 8px; border-radius: 8px; font-size: 10px; font-weight: bold;">RSI: {rs_rsi_value:.0f} 🔴</span>'
+                    elif rs_rsi_value > 60:
+                        rs_rsi_badge = f'<span style="background: #FF9800; color: white; padding: 2px 8px; border-radius: 8px; font-size: 10px; font-weight: bold;">RSI: {rs_rsi_value:.0f} 🟠</span>'
+                    elif rs_rsi_value >= 40:
+                        rs_rsi_badge = f'<span style="background: #4CAF50; color: white; padding: 2px 8px; border-radius: 8px; font-size: 10px; font-weight: bold;">RSI: {rs_rsi_value:.0f} 🟢</span>'
+                    else:
+                        rs_rsi_badge = f'<span style="background: #2196F3; color: white; padding: 2px 8px; border-radius: 8px; font-size: 10px; font-weight: bold;">RSI: {rs_rsi_value:.0f} 🔵</span>'
+                else:
+                    rs_rsi_badge = '<span style="background: #9E9E9E; color: white; padding: 2px 8px; border-radius: 8px; font-size: 10px; font-weight: bold;">RSI: N/A</span>'
+                
+                # Crossover status badge
+                crossover = result.get('rs_crossover_status', 'None')
+                if '🚀' in crossover:
+                    crossover_badge = '<span style="background: #4CAF50; color: white; padding: 2px 8px; border-radius: 8px; font-size: 10px; font-weight: bold;">🚀 Crossed</span>'
+                elif '📈' in crossover:
+                    crossover_badge = '<span style="background: #2196F3; color: white; padding: 2px 8px; border-radius: 8px; font-size: 10px; font-weight: bold;">📈 Near Cross</span>'
+                elif 'Above MA20' in crossover:
+                    crossover_badge = '<span style="background: #8BC34A; color: white; padding: 2px 8px; border-radius: 8px; font-size: 10px; font-weight: bold;">✓ Above MA20</span>'
+                elif 'Below MA20' in crossover:
+                    crossover_badge = '<span style="background: #FF9800; color: white; padding: 2px 8px; border-radius: 8px; font-size: 10px; font-weight: bold;">✗ Below MA20</span>'
+                else:
+                    crossover_badge = '<span style="background: #9E9E9E; color: white; padding: 2px 8px; border-radius: 8px; font-size: 10px; font-weight: bold;">N/A</span>'
+                
+                # OBV status badge
+                obv = result['obv_status']
+                if 'Strong' in obv or 'Accumulation' in obv:
+                    obv_badge = f'<span style="background: #4CAF50; color: white; padding: 2px 8px; border-radius: 8px; font-size: 10px; font-weight: bold;">OBV: ⬆️</span>'
+                elif 'Weak' in obv or 'Distribution' in obv:
+                    obv_badge = f'<span style="background: #F44336; color: white; padding: 2px 8px; border-radius: 8px; font-size: 10px; font-weight: bold;">OBV: ⬇️</span>'
+                elif 'Neutral' in obv:
+                    obv_badge = f'<span style="background: #FFC107; color: #333; padding: 2px 8px; border-radius: 8px; font-size: 10px; font-weight: bold;">OBV: ↔️</span>'
+                else:
+                    obv_badge = '<span style="background: #9E9E9E; color: white; padding: 2px 8px; border-radius: 8px; font-size: 10px; font-weight: bold;">OBV: N/A</span>'
+                
+                # Daily RSI badge
+                rsi_daily = result['rsi_daily']
+                if not np.isnan(rsi_daily):
+                    if rsi_daily > 70:
+                        daily_rsi_badge = f'<span style="background: #F44336; color: white; padding: 2px 8px; border-radius: 8px; font-size: 10px; font-weight: bold;">Daily RSI: {rsi_daily:.0f} 🔴</span>'
+                    elif rsi_daily > 55:
+                        daily_rsi_badge = f'<span style="background: #4CAF50; color: white; padding: 2px 8px; border-radius: 8px; font-size: 10px; font-weight: bold;">Daily RSI: {rsi_daily:.0f} 🟢</span>'
+                    elif rsi_daily >= 45:
+                        daily_rsi_badge = f'<span style="background: #FFC107; color: #333; padding: 2px 8px; border-radius: 8px; font-size: 10px; font-weight: bold;">Daily RSI: {rsi_daily:.0f}</span>'
+                    else:
+                        daily_rsi_badge = f'<span style="background: #2196F3; color: white; padding: 2px 8px; border-radius: 8px; font-size: 10px; font-weight: bold;">Daily RSI: {rsi_daily:.0f} 🔵</span>'
+                else:
+                    daily_rsi_badge = '<span style="background: #9E9E9E; color: white; padding: 2px 8px; border-radius: 8px; font-size: 10px; font-weight: bold;">Daily RSI: N/A</span>'
+                
+                # Create card HTML with visual signals
+                card_html = f'''<div style="border: 1px solid #e0e0e0; border-radius: 12px; padding: 14px; background: white; box-shadow: 0 2px 8px rgba(0,0,0,0.1); margin-bottom: 16px; min-height: 320px; display: flex; flex-direction: column;"><div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;"><div style="display: flex; align-items: center; gap: 8px;"><span style="font-size: 18px; font-weight: bold; color: #1976D2;">{ticker_escaped}</span><span style="font-size: 16px; color: {arrow_color};">{arrow}</span></div><div style="text-align: right; font-size: 14px;">{stars}</div></div><div style="margin-bottom: 10px;"><span style="background: {momentum_color}; color: white; padding: 3px 10px; border-radius: 12px; font-size: 11px; font-weight: 500;">✓ {momentum_badge}</span>{warning_badge}</div><div style="font-size: 28px; font-weight: bold; color: #1976D2; margin-bottom: 8px;">{result['close']:.2f}</div><div style="font-size: 12px; color: #666; margin-bottom: 8px;">{rs_status_text}</div><div style="display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 8px;">{rs_perc_badge}{momentum_5d_badge}</div><div style="display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 8px;">{rs_rsi_badge}{crossover_badge}</div><div style="display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 10px;">{obv_badge}{daily_rsi_badge}</div><div style="margin-top: auto;"><div style="font-size: 11px; color: #666; line-height: 1.4; border-top: 1px solid #e0e0e0; padding-top: 8px;">{description_escaped}</div></div></div>'''
                 
                 st.markdown(card_html, unsafe_allow_html=True)
         
@@ -796,24 +871,86 @@ with tab2:
                 # Escape HTML
                 import html
                 description_escaped = html.escape(description_text)
-                violations_text = "⚠️ Weak RS: Underperforming the market"
-                violations_escaped = html.escape(violations_text)
                 ticker_escaped = html.escape(result['ticker'])
                 
-                # Additional stats
-                rs_percentile_text = f"{result['rs_percentile']:.1f}%"
-                rs_value_text = f"{result['rs_current']:.2f}"
-                rs_ma20_text = f"{result.get('rs_ma20', 0):.2f}" if not np.isnan(result.get('rs_ma20', np.nan)) else "N/A"
+                # Create visual signal indicators for underperforming
+                # RS Percentile indicator (red theme)
+                rs_perc = result['rs_percentile']
+                if rs_perc <= 10:
+                    rs_perc_badge = f'<span style="background: #B71C1C; color: white; padding: 2px 8px; border-radius: 8px; font-size: 10px; font-weight: bold;">RS: {rs_perc:.0f}% 🔻</span>'
+                elif rs_perc <= 20:
+                    rs_perc_badge = f'<span style="background: #D32F2F; color: white; padding: 2px 8px; border-radius: 8px; font-size: 10px; font-weight: bold;">RS: {rs_perc:.0f}% ⬇️</span>'
+                elif rs_perc <= 30:
+                    rs_perc_badge = f'<span style="background: #F44336; color: white; padding: 2px 8px; border-radius: 8px; font-size: 10px; font-weight: bold;">RS: {rs_perc:.0f}% 📉</span>'
+                else:
+                    rs_perc_badge = f'<span style="background: #FF9800; color: white; padding: 2px 8px; border-radius: 8px; font-size: 10px; font-weight: bold;">RS: {rs_perc:.0f}%</span>'
+                
+                # 5-day momentum indicator
+                rs_5d = result.get('rs_5d_change', np.nan)
+                if not np.isnan(rs_5d):
+                    if rs_5d >= 2:
+                        momentum_5d_badge = f'<span style="background: #4CAF50; color: white; padding: 2px 8px; border-radius: 8px; font-size: 10px; font-weight: bold;">5D: +{rs_5d:.1f}% 👍</span>'
+                    elif rs_5d >= 0:
+                        momentum_5d_badge = f'<span style="background: #FFC107; color: #333; padding: 2px 8px; border-radius: 8px; font-size: 10px; font-weight: bold;">5D: +{rs_5d:.1f}%</span>'
+                    elif rs_5d >= -2:
+                        momentum_5d_badge = f'<span style="background: #FF9800; color: white; padding: 2px 8px; border-radius: 8px; font-size: 10px; font-weight: bold;">5D: {rs_5d:.1f}%</span>'
+                    elif rs_5d >= -5:
+                        momentum_5d_badge = f'<span style="background: #F44336; color: white; padding: 2px 8px; border-radius: 8px; font-size: 10px; font-weight: bold;">5D: {rs_5d:.1f}% ↘️</span>'
+                    else:
+                        momentum_5d_badge = f'<span style="background: #B71C1C; color: white; padding: 2px 8px; border-radius: 8px; font-size: 10px; font-weight: bold;">5D: {rs_5d:.1f}% 🔻</span>'
+                else:
+                    momentum_5d_badge = '<span style="background: #9E9E9E; color: white; padding: 2px 8px; border-radius: 8px; font-size: 10px; font-weight: bold;">5D: N/A</span>'
+                
+                # RS RSI indicator
                 rs_rsi_value = result.get('rs_rsi', np.nan)
-                rs_rsi_emoji = '🔴' if not np.isnan(rs_rsi_value) and rs_rsi_value > 70 else '🟢' if not np.isnan(rs_rsi_value) and rs_rsi_value < 30 else '🟡'
-                rs_rsi_text = f"{rs_rsi_emoji} {rs_rsi_value:.1f}" if not np.isnan(rs_rsi_value) else "N/A"
-                rs_distance_text = f"{result.get('rs_distance_pct', 0):+.1f}%" if not np.isnan(result.get('rs_distance_pct', np.nan)) else "N/A"
-                rsi_daily_text = f"{result['rsi_daily']:.1f}" if not np.isnan(result['rsi_daily']) else "N/A"
-                obv_status_text = result['obv_status']
-                crossover_status = result.get('rs_crossover_status', 'None')
+                if not np.isnan(rs_rsi_value):
+                    if rs_rsi_value > 70:
+                        rs_rsi_badge = f'<span style="background: #F44336; color: white; padding: 2px 8px; border-radius: 8px; font-size: 10px; font-weight: bold;">RSI: {rs_rsi_value:.0f} 🔴</span>'
+                    elif rs_rsi_value > 40:
+                        rs_rsi_badge = f'<span style="background: #FFC107; color: #333; padding: 2px 8px; border-radius: 8px; font-size: 10px; font-weight: bold;">RSI: {rs_rsi_value:.0f} 🟡</span>'
+                    else:
+                        rs_rsi_badge = f'<span style="background: #2196F3; color: white; padding: 2px 8px; border-radius: 8px; font-size: 10px; font-weight: bold;">RSI: {rs_rsi_value:.0f} 🔵</span>'
+                else:
+                    rs_rsi_badge = '<span style="background: #9E9E9E; color: white; padding: 2px 8px; border-radius: 8px; font-size: 10px; font-weight: bold;">RSI: N/A</span>'
+                
+                # Crossover status badge
+                crossover = result.get('rs_crossover_status', 'None')
+                if '📈' in crossover:
+                    crossover_badge = '<span style="background: #4CAF50; color: white; padding: 2px 8px; border-radius: 8px; font-size: 10px; font-weight: bold;">📈 Recovery?</span>'
+                elif 'Above MA20' in crossover:
+                    crossover_badge = '<span style="background: #FFC107; color: #333; padding: 2px 8px; border-radius: 8px; font-size: 10px; font-weight: bold;">✓ Above MA20</span>'
+                elif 'Below MA20' in crossover:
+                    crossover_badge = '<span style="background: #F44336; color: white; padding: 2px 8px; border-radius: 8px; font-size: 10px; font-weight: bold;">✗ Below MA20</span>'
+                else:
+                    crossover_badge = '<span style="background: #9E9E9E; color: white; padding: 2px 8px; border-radius: 8px; font-size: 10px; font-weight: bold;">N/A</span>'
+                
+                # OBV status badge
+                obv = result['obv_status']
+                if 'Strong' in obv or 'Accumulation' in obv:
+                    obv_badge = f'<span style="background: #4CAF50; color: white; padding: 2px 8px; border-radius: 8px; font-size: 10px; font-weight: bold;">OBV: ⬆️</span>'
+                elif 'Weak' in obv or 'Distribution' in obv:
+                    obv_badge = f'<span style="background: #F44336; color: white; padding: 2px 8px; border-radius: 8px; font-size: 10px; font-weight: bold;">OBV: ⬇️</span>'
+                elif 'Neutral' in obv:
+                    obv_badge = f'<span style="background: #FFC107; color: #333; padding: 2px 8px; border-radius: 8px; font-size: 10px; font-weight: bold;">OBV: ↔️</span>'
+                else:
+                    obv_badge = '<span style="background: #9E9E9E; color: white; padding: 2px 8px; border-radius: 8px; font-size: 10px; font-weight: bold;">OBV: N/A</span>'
+                
+                # Daily RSI badge
+                rsi_daily = result['rsi_daily']
+                if not np.isnan(rsi_daily):
+                    if rsi_daily > 70:
+                        daily_rsi_badge = f'<span style="background: #F44336; color: white; padding: 2px 8px; border-radius: 8px; font-size: 10px; font-weight: bold;">Daily RSI: {rsi_daily:.0f} 🔴</span>'
+                    elif rsi_daily > 45:
+                        daily_rsi_badge = f'<span style="background: #FFC107; color: #333; padding: 2px 8px; border-radius: 8px; font-size: 10px; font-weight: bold;">Daily RSI: {rsi_daily:.0f}</span>'
+                    elif rsi_daily >= 30:
+                        daily_rsi_badge = f'<span style="background: #2196F3; color: white; padding: 2px 8px; border-radius: 8px; font-size: 10px; font-weight: bold;">Daily RSI: {rsi_daily:.0f} 🔵</span>'
+                    else:
+                        daily_rsi_badge = f'<span style="background: #4CAF50; color: white; padding: 2px 8px; border-radius: 8px; font-size: 10px; font-weight: bold;">Daily RSI: {rsi_daily:.0f} 🟢</span>'
+                else:
+                    daily_rsi_badge = '<span style="background: #9E9E9E; color: white; padding: 2px 8px; border-radius: 8px; font-size: 10px; font-weight: bold;">Daily RSI: N/A</span>'
                 
                 # Create card HTML
-                card_html = f'''<div style="border: 1px solid #ffcdd2; border-radius: 12px; padding: 14px; background: white; box-shadow: 0 2px 8px rgba(244,67,54,0.1); margin-bottom: 16px; min-height: 350px; display: flex; flex-direction: column;"><div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;"><div style="display: flex; align-items: center; gap: 8px;"><span style="font-size: 18px; font-weight: bold; color: #F44336;">{ticker_escaped}</span><span style="font-size: 16px; color: {arrow_color};">{arrow}</span></div><div style="text-align: right; font-size: 14px;">{stars}</div></div><div style="margin-bottom: 10px;"><span style="background: {momentum_color}; color: white; padding: 3px 10px; border-radius: 12px; font-size: 11px; font-weight: 500;">✗ {momentum_badge}</span>{warning_badge}</div><div style="font-size: 28px; font-weight: bold; color: #F44336; margin-bottom: 6px;">{result['close']:.2f}</div><div style="font-size: 12px; color: #666; margin-bottom: 6px;">{rs_status_text}</div><div style="font-size: 12px; color: #666; margin-bottom: 3px;"><strong>Strength:</strong> {strength_rating}/5</div><div style="font-size: 11px; color: #F44336; margin-bottom: 10px;">{violations_escaped}</div><details style="font-size: 11px; color: #666; margin-bottom: 10px; cursor: pointer;"><summary style="font-weight: bold; margin-bottom: 6px;">📊 Detailed Stats</summary><div style="padding: 8px 0; line-height: 1.8;"><div><strong>RS Percentile:</strong> {rs_percentile_text}</div><div><strong>RS Value:</strong> {rs_value_text}</div><div><strong>RS MA20:</strong> {rs_ma20_text}</div><div><strong>RS RSI:</strong> {rs_rsi_text}</div><div><strong>RS vs MA20:</strong> {rs_distance_text}</div><div><strong>RS Status:</strong> {crossover_status}</div><div><strong>RSI (Daily):</strong> {rsi_daily_text}</div><div><strong>OBV Status:</strong> {obv_status_text}</div></div></details><div style="margin-top: auto;"><div style="font-size: 11px; color: #666; line-height: 1.4; border-top: 1px solid #ffcdd2; padding-top: 8px;">{description_escaped}</div></div></div>'''                
+                card_html = f'''<div style="border: 1px solid #ffcdd2; border-radius: 12px; padding: 14px; background: white; box-shadow: 0 2px 8px rgba(244,67,54,0.1); margin-bottom: 16px; min-height: 320px; display: flex; flex-direction: column;"><div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;"><div style="display: flex; align-items: center; gap: 8px;"><span style="font-size: 18px; font-weight: bold; color: #F44336;">{ticker_escaped}</span><span style="font-size: 16px; color: {arrow_color};">{arrow}</span></div><div style="text-align: right; font-size: 14px;">{stars}</div></div><div style="margin-bottom: 10px;"><span style="background: {momentum_color}; color: white; padding: 3px 10px; border-radius: 12px; font-size: 11px; font-weight: 500;">✗ {momentum_badge}</span>{warning_badge}</div><div style="font-size: 28px; font-weight: bold; color: #F44336; margin-bottom: 8px;">{result['close']:.2f}</div><div style="font-size: 12px; color: #666; margin-bottom: 8px;">{rs_status_text}</div><div style="display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 8px;">{rs_perc_badge}{momentum_5d_badge}</div><div style="display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 8px;">{rs_rsi_badge}{crossover_badge}</div><div style="display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 10px;">{obv_badge}{daily_rsi_badge}</div><div style="margin-top: auto;"><div style="font-size: 11px; color: #666; line-height: 1.4; border-top: 1px solid #ffcdd2; padding-top: 8px;">{description_escaped}</div></div></div>'''                
                 st.markdown(card_html, unsafe_allow_html=True)
         
         # Add spacing after cards
