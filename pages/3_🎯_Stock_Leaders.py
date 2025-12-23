@@ -621,12 +621,7 @@ with tab1:
                 if result.get('distribution_warning', False):
                     dist_pct = result.get('rs_distance_pct', 0)
                     if not np.isnan(dist_pct) and abs(dist_pct) > 0:
-                        warning_badge = f"""
-                        <div style="display: flex; align-items: center; gap: 4px; color: #FF9800; font-size: 12px; margin-top: 4px;">
-                            <i class="fas fa-exclamation-triangle"></i>
-                            <span>{abs(dist_pct):.1f}% Tight</span>
-                        </div>
-                        """
+                        warning_badge = f'<div style="display: flex; align-items: center; gap: 4px; color: #FF9800; font-size: 12px; margin-top: 4px;"><i class="fas fa-exclamation-triangle"></i><span>{abs(dist_pct):.1f}% Tight</span></div>'
                 
                 # RS status indicator
                 rs_status_text = ""
@@ -663,17 +658,7 @@ with tab1:
                 
                 # Create card HTML
                 card_html = f"""
-                <div style="
-                    border: 1px solid #e0e0e0;
-                    border-radius: 12px;
-                    padding: 16px;
-                    background: white;
-                    box-shadow: 0 2px 8px rgba(0,0,0,0.1);
-                    margin-bottom: 16px;
-                    height: 100%;
-                    position: relative;
-                ">
-                    <!-- Header with ticker and arrow -->
+                <div style="border: 1px solid #e0e0e0; border-radius: 12px; padding: 16px; background: white; box-shadow: 0 2px 8px rgba(0,0,0,0.1); margin-bottom: 16px; height: 100%; position: relative;">
                     <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
                         <div style="display: flex; align-items: center; gap: 8px;">
                             <span style="font-size: 20px; font-weight: bold; color: #1976D2;">{result['ticker']}</span>
@@ -683,73 +668,29 @@ with tab1:
                             {stars}
                         </div>
                     </div>
-                    
-                    <!-- Momentum badge -->
                     <div style="margin-bottom: 12px;">
-                        <span style="
-                            background: {momentum_color};
-                            color: white;
-                            padding: 4px 12px;
-                            border-radius: 12px;
-                            font-size: 12px;
-                            font-weight: 500;
-                        ">✓ {momentum_badge}</span>
+                        <span style="background: {momentum_color}; color: white; padding: 4px 12px; border-radius: 12px; font-size: 12px; font-weight: 500;">✓ {momentum_badge}</span>
                         {warning_badge}
                     </div>
-                    
-                    <!-- Price -->
                     <div style="font-size: 32px; font-weight: bold; color: #1976D2; margin-bottom: 8px;">
                         {result['close']:.2f}
                     </div>
-                    
-                    <!-- RS Status -->
                     <div style="font-size: 13px; color: #666; margin-bottom: 8px;">
                         {rs_status_text}
                     </div>
-                    
-                    <!-- Strength and Violations -->
                     <div style="font-size: 13px; color: #666; margin-bottom: 4px;">
                         <strong>Strength:</strong> {strength_rating}/5
                     </div>
                     <div style="font-size: 13px; color: #666; margin-bottom: 12px;">
                         {violations_text}
                     </div>
-                    
-                    <!-- Buy Button -->
                     <div style="margin-bottom: 12px;">
-                        <div style="
-                            background: {button_color};
-                            color: white;
-                            padding: 12px;
-                            border-radius: 8px;
-                            text-align: center;
-                            font-weight: bold;
-                            font-size: 14px;
-                            cursor: pointer;
-                        ">{button_text}</div>
+                        <div style="background: {button_color}; color: white; padding: 12px; border-radius: 8px; text-align: center; font-weight: bold; font-size: 14px; cursor: pointer;">{button_text}</div>
                     </div>
-                    
-                    <!-- Read Details Button -->
                     <div style="margin-bottom: 12px;">
-                        <div style="
-                            background: #2196F3;
-                            color: white;
-                            padding: 8px;
-                            border-radius: 8px;
-                            text-align: center;
-                            font-size: 12px;
-                            cursor: pointer;
-                        ">READ RS MA20</div>
+                        <div style="background: #2196F3; color: white; padding: 8px; border-radius: 8px; text-align: center; font-size: 12px; cursor: pointer;">READ RS MA20</div>
                     </div>
-                    
-                    <!-- Description -->
-                    <div style="
-                        font-size: 12px;
-                        color: #666;
-                        line-height: 1.5;
-                        border-top: 1px solid #e0e0e0;
-                        padding-top: 12px;
-                    ">
+                    <div style="font-size: 12px; color: #666; line-height: 1.5; border-top: 1px solid #e0e0e0; padding-top: 12px;">
                         {description_text}
                     </div>
                 </div>
