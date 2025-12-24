@@ -1,11 +1,14 @@
 """
 Relative Strength (RS) analysis utilities for stock leader detection.
 Identifies stocks outperforming VNINDEX using RS, RSI, and OBV.
+Optimized with vectorization and async processing for performance.
 """
 import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta
 from typing import Dict, List, Tuple, Optional
+import asyncio
+from concurrent.futures import ThreadPoolExecutor
 
 
 def calculate_relative_strength(stock_close: pd.Series, vnindex_close: pd.Series, method: str = 'momentum', lookback: int = 63) -> pd.Series:
@@ -43,26 +46,30 @@ def calculate_relative_strength(stock_close: pd.Series, vnindex_close: pd.Series
     
     if method == 'momentum':
         # Rolling momentum-based RS (captures short/medium-term trends)
+        # VECTORIZED calculation for performance
+        
         # Calculate rate of change over lookback period
         stock_roc = aligned['stock'].pct_change(periods=lookback)
         vnindex_roc = aligned['vnindex'].pct_change(periods=lookback)
         
         # RS = (1 + stock_roc) / (1 + vnindex_roc)
-        # This shows relative momentum: >1 = outperforming, <1 = underperforming
         rs = (1 + stock_roc) / (1 + vnindex_roc)
         
-        # For early periods without enough data, use progressive lookback
+        # For early periods without enough data, use progressive lookback (VECTORIZED)
         # This prevents abnormally low RS values in the 0-lookback range
-        for i in range(min(lookback, len(aligned))):
-            if i < 2:
-                # First 2 periods: use normalized price ratio starting from 1.0
-                rs.iloc[i] = (aligned['stock'].iloc[i] / aligned['stock'].iloc[0]) / \
-                             (aligned['vnindex'].iloc[i] / aligned['vnindex'].iloc[0])
-            else:
-                # Use progressive lookback (from first value to current)
-                stock_roc_progressive = (aligned['stock'].iloc[i] / aligned['stock'].iloc[0]) - 1
-                vnindex_roc_progressive = (aligned['vnindex'].iloc[i] / aligned['vnindex'].iloc[0]) - 1
-                rs.iloc[i] = (1 + stock_roc_progressive) / (1 + vnindex_roc_progressive)
+        if lookback > 0 and len(aligned) >= lookback:
+            # Create arrays for vectorized calculation
+            early_indices = np.arange(min(lookback, len(aligned)))
+            
+            # Vectorized: normalized price ratios from first value
+            stock_normalized = aligned['stock'].iloc[:lookback] / aligned['stock'].iloc[0]
+            vnindex_normalized = aligned['vnindex'].iloc[:lookback] / aligned['vnindex'].iloc[0]
+            
+            # Compute early RS values in one operation
+            early_rs = stock_normalized / vnindex_normalized
+            
+            # Update early periods
+            rs.iloc[:lookback] = early_rs
         
     elif method == 'percentage':
         # Cumulative performance from first value (legacy CRS)
@@ -84,11 +91,9 @@ def calculate_relative_strength(stock_close: pd.Series, vnindex_close: pd.Series
     return rs.reindex(stock_close.index)
 
 
-def calculate_multi_period_rs(stock_close: pd.Series, vnindex_close: pd.Series) -> Dict:
+async def calculate_multi_period_rs_async(stock_close: pd.Series, vnindex_close: pd.Series) -> Dict:
     """
-    Calculate RS across multiple time periods (1W, 2W, 1M, 2M, 3M).
-    
-    Returns current RS values for each period plus composite score.
+    Async wrapper for calculate_multi_period_rs to enable parallel processing.
     
     Args:
         stock_close: Stock closing prices
@@ -97,46 +102,39 @@ def calculate_multi_period_rs(stock_close: pd.Series, vnindex_close: pd.Series) 
     Returns:
         Dictionary with rs_1w, rs_2w, rs_1m, rs_2m, rs_3m, rs_composite, and trend
     """
-    # Calculate RS for each period
-    rs_1w = calculate_relative_strength(stock_close, vnindex_close, method='momentum', lookback=5)
-    rs_2w = calculate_relative_strength(stock_close, vnindex_close, method='momentum', lookback=10)
-    rs_1m = calculate_relative_strength(stock_close, vnindex_close, method='momentum', lookback=21)
-    rs_2m = calculate_relative_strength(stock_close, vnindex_close, method='momentum', lookback=42)
-    rs_3m = calculate_relative_strength(stock_close, vnindex_close, method='momentum', lookback=63)
+    loop = asyncio.get_event_loop()
+    with ThreadPoolExecutor(max_workers=5) as executor:
+        # Run all 5 period calculations in parallel
+        tasks = [
+            loop.run_in_executor(executor, calculate_relative_strength, stock_close, vnindex_close, 'momentum', 5),
+            loop.run_in_executor(executor, calculate_relative_strength, stock_close, vnindex_close, 'momentum', 10),
+            loop.run_in_executor(executor, calculate_relative_strength, stock_close, vnindex_close, 'momentum', 21),
+            loop.run_in_executor(executor, calculate_relative_strength, stock_close, vnindex_close, 'momentum', 42),
+            loop.run_in_executor(executor, calculate_relative_strength, stock_close, vnindex_close, 'momentum', 63)
+        ]
+        rs_1w, rs_2w, rs_1m, rs_2m, rs_3m = await asyncio.gather(*tasks)
+        rs_1w, rs_2w, rs_1m, rs_2m, rs_3m = await asyncio.gather(*tasks)
     
-    # Get current values
+    # Get current values (vectorized)
     rs_1w_current = rs_1w.iloc[-1] if not rs_1w.empty else np.nan
     rs_2w_current = rs_2w.iloc[-1] if not rs_2w.empty else np.nan
     rs_1m_current = rs_1m.iloc[-1] if not rs_1m.empty else np.nan
     rs_2m_current = rs_2m.iloc[-1] if not rs_2m.empty else np.nan
     rs_3m_current = rs_3m.iloc[-1] if not rs_3m.empty else np.nan
     
-    # Calculate composite RS (weighted average: 1W=30%, 2W=25%, 1M=25%, 2M=15%, 3M=5%)
-    # Emphasize recent momentum progressively
-    valid_values = []
-    weights = []
+    # Calculate composite RS using numpy for vectorization
+    rs_values = np.array([rs_1w_current, rs_2w_current, rs_1m_current, rs_2m_current, rs_3m_current])
+    weights = np.array([0.30, 0.25, 0.25, 0.15, 0.05])
     
-    if not np.isnan(rs_1w_current):
-        valid_values.append(rs_1w_current)
-        weights.append(0.30)  # 30% weight on 1-week
-    if not np.isnan(rs_2w_current):
-        valid_values.append(rs_2w_current)
-        weights.append(0.25)  # 25% weight on 2-week
-    if not np.isnan(rs_1m_current):
-        valid_values.append(rs_1m_current)
-        weights.append(0.25)  # 25% weight on 1-month
-    if not np.isnan(rs_2m_current):
-        valid_values.append(rs_2m_current)
-        weights.append(0.15)  # 15% weight on 2-month
-    if not np.isnan(rs_3m_current):
-        valid_values.append(rs_3m_current)
-        weights.append(0.05)  # 5% weight on 3-month
+    # Mask for valid (non-NaN) values
+    valid_mask = ~np.isnan(rs_values)
     
-    if valid_values:
+    if valid_mask.any():
+        valid_rs = rs_values[valid_mask]
+        valid_weights = weights[valid_mask]
         # Normalize weights
-        total_weight = sum(weights)
-        normalized_weights = [w / total_weight for w in weights]
-        rs_composite = sum(v * w for v, w in zip(valid_values, normalized_weights))
+        valid_weights = valid_weights / valid_weights.sum()
+        rs_composite = np.dot(valid_rs, valid_weights)
     else:
         rs_composite = np.nan
     
@@ -168,6 +166,32 @@ def calculate_multi_period_rs(stock_close: pd.Series, vnindex_close: pd.Series) 
         'rs_2m_series': rs_2m,
         'rs_3m_series': rs_3m
     }
+
+
+def calculate_multi_period_rs(stock_close: pd.Series, vnindex_close: pd.Series) -> Dict:
+    """
+    Synchronous wrapper for calculate_multi_period_rs_async.
+    For backward compatibility with existing code.
+    
+    Args:
+        stock_close: Stock closing prices
+        vnindex_close: VNINDEX closing prices
+    
+    Returns:
+        Dictionary with rs_1w, rs_2w, rs_1m, rs_2m, rs_3m, rs_composite, and trend
+    """
+    try:
+        loop = asyncio.get_event_loop()
+        if loop.is_running():
+            # If there's already a running loop, create a new one in a thread
+            import nest_asyncio
+            nest_asyncio.apply()
+            return loop.run_until_complete(calculate_multi_period_rs_async(stock_close, vnindex_close))
+        else:
+            return loop.run_until_complete(calculate_multi_period_rs_async(stock_close, vnindex_close))
+    except RuntimeError:
+        # No event loop, create one
+        return asyncio.run(calculate_multi_period_rs_async(stock_close, vnindex_close))
 
 
 def calculate_rs_ema_slope(rs: pd.Series, period: int = 10, lookback: int = 3) -> float:

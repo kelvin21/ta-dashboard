@@ -6,13 +6,15 @@ Primarily based on Relative Strength (RS) vs VNINDEX.
 import os
 import sys
 from pathlib import Path
-from typing import Dict
+from typing import Dict, List
 import streamlit as st
 import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
+import asyncio
+from concurrent.futures import ThreadPoolExecutor
 
 # Add parent directory to path
 SCRIPT_DIR = Path(__file__).parent.parent
@@ -290,6 +292,78 @@ def create_rs_chart(ticker: str, analysis_date: datetime, vnindex_data: pd.DataF
     return fig
 
 @st.cache_data(ttl=600)
+async def analyze_stock_leadership_async(ticker: str, analysis_date: datetime, vnindex_data: pd.DataFrame) -> Dict:
+    """
+    Async wrapper for analyze_stock_leadership to enable parallel processing.
+    
+    Args:
+        ticker: Stock ticker
+        analysis_date: Analysis date
+        vnindex_data: VNINDEX price data for RS calculation
+    
+    Returns:
+        Dictionary with analysis results or None
+    """
+    loop = asyncio.get_event_loop()
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        result = await loop.run_in_executor(
+            executor, 
+            analyze_stock_leadership,
+            ticker,
+            analysis_date,
+            vnindex_data
+        )
+        return result
+
+
+async def analyze_all_stocks_async(tickers: List[str], analysis_date: datetime, vnindex_data: pd.DataFrame, progress_callback=None) -> List[Dict]:
+    """
+    Analyze multiple stocks in parallel using asyncio.
+    
+    Args:
+        tickers: List of stock tickers to analyze
+        analysis_date: Analysis date
+        vnindex_data: VNINDEX price data
+        progress_callback: Optional callback function for progress updates
+    
+    Returns:
+        List of analysis results
+    """
+    tasks = []
+    for ticker in tickers:
+        if ticker == 'VNINDEX':
+            continue
+        task = analyze_stock_leadership_async(ticker, analysis_date, vnindex_data)
+        tasks.append((ticker, task))
+    
+    results = []
+    rs_values = []
+    
+    # Process in batches to avoid overwhelming the system
+    batch_size = 10
+    for i in range(0, len(tasks), batch_size):
+        batch = tasks[i:i+batch_size]
+        batch_tasks = [task for _, task in batch]
+        batch_tickers = [ticker for ticker, _ in batch]
+        
+        # Wait for batch to complete
+        batch_results = await asyncio.gather(*batch_tasks, return_exceptions=True)
+        
+        # Process results
+        for ticker, result in zip(batch_tickers, batch_results):
+            if progress_callback:
+                progress_callback(ticker, i + len(batch_tasks), len(tasks))
+            
+            if isinstance(result, Exception):
+                continue
+            
+            if result:
+                results.append(result)
+                rs_values.append(result['rs_current'])
+    
+    return results, rs_values
+
+
 def analyze_stock_leadership(ticker: str, analysis_date: datetime, vnindex_data: pd.DataFrame) -> Dict:
     """
     Analyze single stock for leadership potential based primarily on RS.
@@ -604,27 +678,34 @@ elif universe == "HOSE":
 else:
     filtered_tickers = all_tickers
 
+# Analyze stocks in parallel using async
 progress_bar = st.progress(0)
 status_text = st.empty()
 
-results = []
-rs_values = []
+def update_progress(ticker, current, total):
+    """Callback for progress updates"""
+    status_text.text(f"Analyzing {ticker} ({current}/{total})...")
+    progress_bar.progress(current / total)
 
-for idx, ticker in enumerate(filtered_tickers):
-    if ticker == 'VNINDEX':
-        continue
-    
-    status_text.text(f"Analyzing {ticker} ({idx + 1}/{len(filtered_tickers)})...")
-    
-    try:
-        analysis = analyze_stock_leadership(ticker, analysis_datetime, vnindex_data)
-        if analysis:
-            results.append(analysis)
-            rs_values.append(analysis['rs_current'])
-    except Exception as e:
-        pass
-    
-    progress_bar.progress((idx + 1) / len(filtered_tickers))
+# Run async analysis
+try:
+    results, rs_values = asyncio.run(analyze_all_stocks_async(
+        filtered_tickers, 
+        analysis_datetime, 
+        vnindex_data,
+        progress_callback=update_progress
+    ))
+except RuntimeError:
+    # If event loop is already running (e.g., in Jupyter), use nest_asyncio
+    import nest_asyncio
+    nest_asyncio.apply()
+    loop = asyncio.get_event_loop()
+    results, rs_values = loop.run_until_complete(analyze_all_stocks_async(
+        filtered_tickers, 
+        analysis_datetime, 
+        vnindex_data,
+        progress_callback=update_progress
+    ))
 
 progress_bar.empty()
 status_text.empty()
