@@ -355,6 +355,7 @@ async def analyze_all_stocks_async(tickers: List[str], analysis_date: datetime, 
                 progress_callback(ticker, i + len(batch_tasks), len(tasks))
             
             if isinstance(result, Exception):
+                st.error(f"Error analyzing {ticker}: {str(result)}")
                 continue
             
             if result:
@@ -364,7 +365,6 @@ async def analyze_all_stocks_async(tickers: List[str], analysis_date: datetime, 
     return results, rs_values
 
 
-@st.cache_data(ttl=600)
 def analyze_stock_leadership(ticker: str, analysis_date: datetime, vnindex_data: pd.DataFrame) -> Dict:
     """
     Analyze single stock for leadership potential based primarily on RS.
