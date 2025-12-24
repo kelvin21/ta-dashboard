@@ -291,7 +291,6 @@ def create_rs_chart(ticker: str, analysis_date: datetime, vnindex_data: pd.DataF
     
     return fig
 
-@st.cache_data(ttl=600)
 async def analyze_stock_leadership_async(ticker: str, analysis_date: datetime, vnindex_data: pd.DataFrame) -> Dict:
     """
     Async wrapper for analyze_stock_leadership to enable parallel processing.
@@ -364,6 +363,7 @@ async def analyze_all_stocks_async(tickers: List[str], analysis_date: datetime, 
     return results, rs_values
 
 
+@st.cache_data(ttl=600)
 def analyze_stock_leadership(ticker: str, analysis_date: datetime, vnindex_data: pd.DataFrame) -> Dict:
     """
     Analyze single stock for leadership potential based primarily on RS.
