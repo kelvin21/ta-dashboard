@@ -7,6 +7,7 @@ import os
 import sys
 from pathlib import Path
 from typing import Dict, List
+import html
 import streamlit as st
 import pandas as pd
 import numpy as np
