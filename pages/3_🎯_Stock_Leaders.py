@@ -76,25 +76,26 @@ st.markdown("""
 # Summary/Introduction Section
 st.markdown("### 📊 What is Multi-Period Relative Strength?")
 st.write("""
-**Multi-Period RS** measures stock momentum across **five timeframes** (1W, 2W, 1M, 2M, 3M) for comprehensive analysis:
+**Multi-Period RS** measures stock momentum across **six timeframes** (Daily, 1W, 2W, 1M, 2M, 3M) for comprehensive analysis:
 
 **Individual Periods:**
+- **Daily RS** (1 day): Immediate momentum - Most responsive to price action
 - **1W RS** (5 days): Very short-term momentum - Immediate strength
 - **2W RS** (10 days): Short-term momentum - Quick swing trades
 - **1M RS** (21 days): Medium-short momentum - Standard swing horizon  
 - **2M RS** (42 days): Medium-term momentum - Position building
 - **3M RS** (63 days): Longer-term momentum - Trend validation
 
-**Composite RS** = Weighted average (1W: 30%, 2W: 25%, 1M: 25%, 2M: 15%, 3M: 5%)
+**Composite RS** = Weighted average (Daily: 25%, 1W: 25%, 2W: 20%, 1M: 15%, 2M: 10%, 3M: 5%)
 - Emphasizes recent momentum with progressive weighting
 - **RS > 1.0**: Outperforming VNINDEX
 - **RS < 1.0**: Underperforming VNINDEX
 
 **Trend Analysis:**
-- **Accelerating**: 1W > 1M > 3M (Getting stronger - Best setup)
-- **Decelerating**: 1W < 1M < 3M (Getting weaker - Exit signal)
+- **Accelerating**: Daily > 1W > 1M > 3M (Getting stronger - Best setup)
+- **Decelerating**: Daily < 1W < 1M < 3M (Getting weaker - Exit signal)
 
-This multi-timeframe approach captures momentum **consistency** and **direction** from short-term
+This multi-timeframe approach captures momentum **consistency** and **direction** from immediate
 reactivity to longer-term trends, providing superior ticker comparison.
 """)
 
@@ -383,16 +384,17 @@ def analyze_stock_leadership(ticker: str, analysis_date: datetime, vnindex_data:
     if df.empty or len(df) < 20:
         return None
     
-    # Calculate Multi-Period RS (1W, 2W, 1M, 2M, 3M) for comprehensive momentum analysis
+    # Calculate Multi-Period RS (Daily, 1W, 2W, 1M, 2M, 3M) for comprehensive momentum analysis
     rs_analysis = calculate_multi_period_rs(df['close'], vnindex_data['close'])
     
-    # Use composite RS as primary metric (weighted: 1W=30%, 2W=25%, 1M=25%, 2M=15%, 3M=5%)
+    # Use composite RS as primary metric (weighted: Daily=25%, 1W=25%, 2W=20%, 1M=15%, 2M=10%, 3M=5%)
     rs_current = rs_analysis['rs_composite']
     if np.isnan(rs_current):
         return None
     
     # Store all RS periods in dataframe (use 1M for MA calculations as baseline)
     df['rs'] = rs_analysis['rs_1m_series']  # 1-month for MA baseline
+    df['rs_daily'] = rs_analysis['rs_daily_series']
     df['rs_1w'] = rs_analysis['rs_1w_series']
     df['rs_2w'] = rs_analysis['rs_2w_series']
     df['rs_1m'] = rs_analysis['rs_1m_series']
@@ -497,7 +499,8 @@ def analyze_stock_leadership(ticker: str, analysis_date: datetime, vnindex_data:
     return {
         'ticker': ticker,
         'close': current['close'],
-        'rs_current': rs_current,  # Composite RS (weighted 1W, 2W, 1M, 2M, 3M)
+        'rs_current': rs_current,  # Composite RS (weighted Daily, 1W, 2W, 1M, 2M, 3M)
+        'rs_daily': rs_analysis['rs_daily'],
         'rs_1w': rs_analysis['rs_1w'],
         'rs_2w': rs_analysis['rs_2w'],
         'rs_1m': rs_analysis['rs_1m'],
@@ -963,7 +966,8 @@ with tab1:
                 else:
                     rs_perc_badge = f'<span style="background: #9E9E9E; color: white; padding: 2px 8px; border-radius: 8px; font-size: 10px; font-weight: bold;">RS: {rs_perc:.0f}%</span>'
                 
-                # Multi-period RS badges (1W, 2W, 1M, 2M, 3M)
+                # Multi-period RS badges (Daily, 1W, 2W, 1M, 2M, 3M)
+                rs_daily = result.get('rs_daily', np.nan)
                 rs_1w = result.get('rs_1w', np.nan)
                 rs_2w = result.get('rs_2w', np.nan)
                 rs_1m = result.get('rs_1m', np.nan)
@@ -986,11 +990,17 @@ with tab1:
                     else:
                         return '#F44336'  # Red
                 
+                rs_daily_color = get_rs_color(rs_daily)
                 rs_1w_color = get_rs_color(rs_1w)
                 rs_2w_color = get_rs_color(rs_2w)
                 rs_1m_color = get_rs_color(rs_1m)
                 rs_2m_color = get_rs_color(rs_2m)
                 rs_3m_color = get_rs_color(rs_3m)
+                
+                if not np.isnan(rs_daily):
+                    rs_daily_badge = f'<span style="background: {rs_daily_color}; color: white; padding: 2px 5px; border-radius: 5px; font-size: 8.5px; font-weight: bold;">D: {rs_daily:.2f}</span>'
+                else:
+                    rs_daily_badge = '<span style="background: #9E9E9E; color: white; padding: 2px 5px; border-radius: 5px; font-size: 8.5px;">D: N/A</span>'
                 
                 if not np.isnan(rs_1w):
                     rs_1w_badge = f'<span style="background: {rs_1w_color}; color: white; padding: 2px 5px; border-radius: 5px; font-size: 8.5px; font-weight: bold;">1W: {rs_1w:.2f}</span>'
@@ -1100,7 +1110,7 @@ with tab1:
                     daily_rsi_badge = '<span style="background: #9E9E9E; color: white; padding: 2px 8px; border-radius: 8px; font-size: 10px; font-weight: bold;">Daily RSI: N/A</span>'
                 
                 # Create card HTML with visual signals
-                card_html = f'''<div style="border: 1px solid #e0e0e0; border-radius: 12px; padding: 14px; background: white; box-shadow: 0 2px 8px rgba(0,0,0,0.1); margin-bottom: 16px; min-height: 380px; display: flex; flex-direction: column;"><div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;"><div style="display: flex; align-items: center; gap: 8px;"><span style="font-size: 18px; font-weight: bold; color: #1976D2;">{ticker_escaped}</span><span style="font-size: 16px; color: {arrow_color};">{arrow}</span></div><div style="text-align: right; font-size: 14px;">{stars}</div></div><div style="margin-bottom: 10px;"><span style="background: {momentum_color}; color: white; padding: 3px 10px; border-radius: 12px; font-size: 11px; font-weight: 500;">✓ {momentum_badge}</span>{warning_badge}</div><div style="font-size: 28px; font-weight: bold; color: #1976D2; margin-bottom: 8px;">{result['close']:.2f}</div><div style="font-size: 12px; color: #666; margin-bottom: 8px;">{rs_status_text}</div><div style="display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 6px;">{rs_perc_badge}{momentum_5d_badge}</div><div style="display: flex; flex-wrap: wrap; gap: 2px; margin-bottom: 6px; padding: 4px; background: #F5F5F5; border-radius: 6px;">{rs_1w_badge}{rs_2w_badge}{rs_1m_badge}{rs_2m_badge}{rs_3m_badge}<div style="margin-left: 4px;">{rs_trend_badge}</div></div><div style="display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 8px;">{rs_rsi_badge}{crossover_badge}</div><div style="display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 10px;">{obv_badge}{daily_rsi_badge}</div><div style="margin-top: auto;"><div style="font-size: 11px; color: #666; line-height: 1.4; border-top: 1px solid #e0e0e0; padding-top: 8px;">{description_escaped}</div></div></div>'''
+                card_html = f'''<div style="border: 1px solid #e0e0e0; border-radius: 12px; padding: 14px; background: white; box-shadow: 0 2px 8px rgba(0,0,0,0.1); margin-bottom: 16px; min-height: 380px; display: flex; flex-direction: column;"><div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;"><div style="display: flex; align-items: center; gap: 8px;"><span style="font-size: 18px; font-weight: bold; color: #1976D2;">{ticker_escaped}</span><span style="font-size: 16px; color: {arrow_color};">{arrow}</span></div><div style="text-align: right; font-size: 14px;">{stars}</div></div><div style="margin-bottom: 10px;"><span style="background: {momentum_color}; color: white; padding: 3px 10px; border-radius: 12px; font-size: 11px; font-weight: 500;">✓ {momentum_badge}</span>{warning_badge}</div><div style="font-size: 28px; font-weight: bold; color: #1976D2; margin-bottom: 8px;">{result['close']:.2f}</div><div style="font-size: 12px; color: #666; margin-bottom: 8px;">{rs_status_text}</div><div style="display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 6px;">{rs_perc_badge}{momentum_5d_badge}</div><div style="display: flex; flex-wrap: wrap; gap: 2px; margin-bottom: 6px; padding: 4px; background: #F5F5F5; border-radius: 6px;">{rs_daily_badge}{rs_1w_badge}{rs_2w_badge}{rs_1m_badge}{rs_2m_badge}{rs_3m_badge}<div style="margin-left: 4px;">{rs_trend_badge}</div></div><div style="display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 8px;">{rs_rsi_badge}{crossover_badge}</div><div style="display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 10px;">{obv_badge}{daily_rsi_badge}</div><div style="margin-top: auto;"><div style="font-size: 11px; color: #666; line-height: 1.4; border-top: 1px solid #e0e0e0; padding-top: 8px;">{description_escaped}</div></div></div>'''
                 
                 st.markdown(card_html, unsafe_allow_html=True)
                 
@@ -1578,7 +1588,8 @@ st.markdown("""
 <div class="material-card elevation-2" style="padding: 1.5rem; margin-bottom: 1rem;">
 <h3>🎯 Multi-Period Relative Strength Analysis</h3>
 
-**Core Concept - Five Timeframe Momentum:**
+**Core Concept - Six Timeframe Momentum:**
+- **Daily RS**: (Stock's 1-day ROC) / (VNINDEX's 1-day ROC) - **Immediate**
 - **1W RS**: (Stock's 5-day ROC) / (VNINDEX's 5-day ROC) - **Very Short-term**
 - **2W RS**: (Stock's 10-day ROC) / (VNINDEX's 10-day ROC) - **Short-term**
 - **1M RS**: (Stock's 21-day ROC) / (VNINDEX's 21-day ROC) - **Medium-Short**
@@ -1586,7 +1597,7 @@ st.markdown("""
 - **3M RS**: (Stock's 63-day ROC) / (VNINDEX's 63-day ROC) - **Longer-term**
 
 **Composite RS Formula:**
-- Weighted Average: (1W × 30%) + (2W × 25%) + (1M × 25%) + (2M × 15%) + (3M × 5%)
+- Weighted Average: (Daily × 25%) + (1W × 25%) + (2W × 20%) + (1M × 15%) + (2M × 10%) + (3M × 5%)
 - Progressive weighting emphasizes recent momentum while validating with longer trends
 
 **Interpretation:**
@@ -1595,7 +1606,7 @@ st.markdown("""
 - RS = 1.0: Moving **in line** with the market
 
 **Trend Signals:**
-- **🚀 Accelerating**: 1W > 1M > 3M (Building momentum - Best setup)
+- **🚀 Accelerating**: Daily > 1W > 1M > 3M (Building momentum - Best setup)
 - **📈 Strengthening**: 1W > 3M (Recent strength emerging)
 - **↔️ Stable**: Consistent across periods
 - **📉 Weakening**: 1W < 3M (Losing momentum)

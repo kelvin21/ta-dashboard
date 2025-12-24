@@ -100,22 +100,23 @@ async def calculate_multi_period_rs_async(stock_close: pd.Series, vnindex_close:
         vnindex_close: VNINDEX closing prices
     
     Returns:
-        Dictionary with rs_1w, rs_2w, rs_1m, rs_2m, rs_3m, rs_composite, and trend
+        Dictionary with rs_daily, rs_1w, rs_2w, rs_1m, rs_2m, rs_3m, rs_composite, and trend
     """
     loop = asyncio.get_event_loop()
-    with ThreadPoolExecutor(max_workers=5) as executor:
-        # Run all 5 period calculations in parallel
+    with ThreadPoolExecutor(max_workers=6) as executor:
+        # Run all 6 period calculations in parallel
         tasks = [
+            loop.run_in_executor(executor, calculate_relative_strength, stock_close, vnindex_close, 'momentum', 1),
             loop.run_in_executor(executor, calculate_relative_strength, stock_close, vnindex_close, 'momentum', 5),
             loop.run_in_executor(executor, calculate_relative_strength, stock_close, vnindex_close, 'momentum', 10),
             loop.run_in_executor(executor, calculate_relative_strength, stock_close, vnindex_close, 'momentum', 21),
             loop.run_in_executor(executor, calculate_relative_strength, stock_close, vnindex_close, 'momentum', 42),
             loop.run_in_executor(executor, calculate_relative_strength, stock_close, vnindex_close, 'momentum', 63)
         ]
-        rs_1w, rs_2w, rs_1m, rs_2m, rs_3m = await asyncio.gather(*tasks)
-        rs_1w, rs_2w, rs_1m, rs_2m, rs_3m = await asyncio.gather(*tasks)
+        rs_daily, rs_1w, rs_2w, rs_1m, rs_2m, rs_3m = await asyncio.gather(*tasks)
     
     # Get current values (vectorized)
+    rs_daily_current = rs_daily.iloc[-1] if not rs_daily.empty else np.nan
     rs_1w_current = rs_1w.iloc[-1] if not rs_1w.empty else np.nan
     rs_2w_current = rs_2w.iloc[-1] if not rs_2w.empty else np.nan
     rs_1m_current = rs_1m.iloc[-1] if not rs_1m.empty else np.nan
@@ -123,8 +124,9 @@ async def calculate_multi_period_rs_async(stock_close: pd.Series, vnindex_close:
     rs_3m_current = rs_3m.iloc[-1] if not rs_3m.empty else np.nan
     
     # Calculate composite RS using numpy for vectorization
-    rs_values = np.array([rs_1w_current, rs_2w_current, rs_1m_current, rs_2m_current, rs_3m_current])
-    weights = np.array([0.30, 0.25, 0.25, 0.15, 0.05])
+    # Weights: Daily=25%, 1W=25%, 2W=20%, 1M=15%, 2M=10%, 3M=5%
+    rs_values = np.array([rs_daily_current, rs_1w_current, rs_2w_current, rs_1m_current, rs_2m_current, rs_3m_current])
+    weights = np.array([0.25, 0.25, 0.20, 0.15, 0.10, 0.05])
     
     # Mask for valid (non-NaN) values
     valid_mask = ~np.isnan(rs_values)
@@ -138,21 +140,22 @@ async def calculate_multi_period_rs_async(stock_close: pd.Series, vnindex_close:
     else:
         rs_composite = np.nan
     
-    # Determine trend (accelerating/decelerating/stable) - using 1W, 1M, 3M
+    # Determine trend (accelerating/decelerating/stable) - using Daily, 1W, 1M, 3M
     trend = "N/A"
-    if not np.isnan(rs_1w_current) and not np.isnan(rs_1m_current) and not np.isnan(rs_3m_current):
-        if rs_1w_current > rs_1m_current > rs_3m_current:
+    if not np.isnan(rs_daily_current) and not np.isnan(rs_1w_current) and not np.isnan(rs_1m_current) and not np.isnan(rs_3m_current):
+        if rs_daily_current > rs_1w_current > rs_1m_current > rs_3m_current:
             trend = "Accelerating"  # Getting stronger
-        elif rs_1w_current < rs_1m_current < rs_3m_current:
+        elif rs_daily_current < rs_1w_current < rs_1m_current < rs_3m_current:
             trend = "Decelerating"  # Getting weaker
-        elif rs_1w_current > rs_3m_current:
+        elif rs_daily_current > rs_3m_current:
             trend = "Strengthening"
-        elif rs_1w_current < rs_3m_current:
+        elif rs_daily_current < rs_3m_current:
             trend = "Weakening"
         else:
             trend = "Stable"
     
     return {
+        'rs_daily': rs_daily_current,
         'rs_1w': rs_1w_current,
         'rs_2w': rs_2w_current,
         'rs_1m': rs_1m_current,
@@ -160,6 +163,7 @@ async def calculate_multi_period_rs_async(stock_close: pd.Series, vnindex_close:
         'rs_3m': rs_3m_current,
         'rs_composite': rs_composite,
         'rs_trend': trend,
+        'rs_daily_series': rs_daily,
         'rs_1w_series': rs_1w,
         'rs_2w_series': rs_2w,
         'rs_1m_series': rs_1m,
@@ -178,7 +182,7 @@ def calculate_multi_period_rs(stock_close: pd.Series, vnindex_close: pd.Series) 
         vnindex_close: VNINDEX closing prices
     
     Returns:
-        Dictionary with rs_1w, rs_2w, rs_1m, rs_2m, rs_3m, rs_composite, and trend
+        Dictionary with rs_daily, rs_1w, rs_2w, rs_1m, rs_2m, rs_3m, rs_composite, and trend
     """
     try:
         loop = asyncio.get_event_loop()
