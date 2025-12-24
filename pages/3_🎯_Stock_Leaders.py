@@ -75,48 +75,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # Summary/Introduction Section
-st.markdown("### 📊 What is Multi-Period Relative Strength?")
-st.write("""
-**Multi-Period RS** measures stock momentum across **six timeframes** (Daily, 1W, 2W, 1M, 2M, 3M) for comprehensive analysis:
-
-**Individual Periods:**
-- **Daily RS** (1 day): Immediate momentum - Most responsive to price action
-- **1W RS** (5 days): Very short-term momentum - Immediate strength
-- **2W RS** (10 days): Short-term momentum - Quick swing trades
-- **1M RS** (21 days): Medium-short momentum - Standard swing horizon  
-- **2M RS** (42 days): Medium-term momentum - Position building
-- **3M RS** (63 days): Longer-term momentum - Trend validation
-
-**Composite RS** = Weighted average (Daily: 25%, 1W: 25%, 2W: 20%, 1M: 15%, 2M: 10%, 3M: 5%)
-- Emphasizes recent momentum with progressive weighting
-- **RS > 1.0**: Outperforming VNINDEX
-- **RS < 1.0**: Underperforming VNINDEX
-
-**Trend Analysis:**
-- **Accelerating**: Daily > 1W > 1M > 3M (Getting stronger - Best setup)
-- **Decelerating**: Daily < 1W < 1M < 3M (Getting weaker - Exit signal)
-
-This multi-timeframe approach captures momentum **consistency** and **direction** from immediate
-reactivity to longer-term trends, providing superior ticker comparison.
-""")
-
-col_intro1, col_intro2 = st.columns(2)
-
-with col_intro1:
-    st.success("**🚀 Outperforming Leaders**")
-    st.write("""
-    Stocks with high RS percentile (top 20-30%) are **market leaders**. 
-    Look for RS crossing above MA20 as entry signals, but avoid overextended stocks.
-    """)
-
-with col_intro2:
-    st.error("**📉 Underperforming Laggards**")
-    st.write("""
-    Stocks with low RS percentile (bottom 30%) are **lagging** the market. 
-    Consider reducing exposure or looking for mean reversion opportunities.
-    """)
-
-st.warning("**💡 Key Insight:** Strong stocks become stronger, weak stocks become weaker. Focus on relative strength, not just price.")
+st.info("💡 **Quick Guide:** RS > 1.0 = Outperforming market | RS < 1.0 = Underperforming | Focus on stocks with consistent RS across multiple timeframes | See methodology at bottom")
 
 # =====================================================================
 # HELPER FUNCTIONS
@@ -774,49 +733,6 @@ underperforming_filtered.sort(key=lambda x: x['score'], reverse=False)  # Lowest
 
 st.markdown("---")
 
-# Detect RS Daily crossovers above/below 1.0 (VNINDEX benchmark)
-rs_daily_crossovers = {
-    'just_above': [],      # Just crossed above 1.0
-    'near_above': [],      # Close to crossing above 1.0 (0.97-1.0)
-    'just_below': [],      # Just crossed below 1.0
-    'near_below': []       # Close to crossing below 1.0 (1.0-1.03)
-}
-
-for result in results:
-    rs_daily = result.get('rs_daily', np.nan)
-    if np.isnan(rs_daily):
-        continue
-    
-    # Try to get previous day's RS Daily from the data
-    ticker = result['ticker']
-    try:
-        # Load recent data to check previous value
-        df = load_price_data_for_ticker(ticker, analysis_datetime - timedelta(days=30), analysis_datetime)
-        if not df.empty and len(df) >= 2:
-            # Get RS Daily series
-            vnindex_recent = vnindex_data[vnindex_data.index.isin(df.index)]
-            if not vnindex_recent.empty:
-                rs_daily_series = calculate_relative_strength(df['close'], vnindex_recent['close'], 'momentum', 1)
-                if len(rs_daily_series) >= 2:
-                    rs_daily_prev = rs_daily_series.iloc[-2]
-                    rs_daily_current = rs_daily_series.iloc[-1]
-                    
-                    # Just crossed above 1.0 (bullish - outperforming)
-                    if rs_daily_prev <= 1.0 and rs_daily_current > 1.0:
-                        rs_daily_crossovers['just_above'].append(result)
-                    # Near crossing above (within 3% below 1.0)
-                    elif 0.97 <= rs_daily_current < 1.0:
-                        rs_daily_crossovers['near_above'].append(result)
-                    # Just crossed below 1.0 (bearish - underperforming)
-                    elif rs_daily_prev >= 1.0 and rs_daily_current < 1.0:
-                        rs_daily_crossovers['just_below'].append(result)
-                    # Near crossing below (within 3% above 1.0)
-                    elif 1.0 < rs_daily_current <= 1.03:
-                        rs_daily_crossovers['near_below'].append(result)
-    except Exception as e:
-        # Skip if data unavailable
-        continue
-
 # Summary Statistics
 st.markdown("## 📊 Market RS Distribution")
 
@@ -882,132 +798,83 @@ if summary_parts:
     </div>
     """, unsafe_allow_html=True)
 
-# RS Daily Crossover vs VNINDEX (1.0 benchmark)
-st.markdown("### 🎯 RS Daily Crossover Alerts (vs VNINDEX)")
-st.caption("Stocks crossing above/below 1.0 indicate transition from underperforming to outperforming (or vice versa)")
+# RS Composite Crossover vs VNINDEX (1.0 benchmark) - Show Top 10 Strongest/Weakest
+st.markdown("### 🎯 RS Crossover Alerts (vs VNINDEX)")
+st.caption("Stocks with Composite RS crossing 1.0 threshold - Showing top 10 strongest outperformers and 10 weakest underperformers")
 
-col_cross1, col_cross2, col_cross3, col_cross4 = st.columns(4)
+# Sort all stocks by composite RS
+stocks_above_1 = [r for r in results if r.get('rs_current', 0) > 1.0]
+stocks_below_1 = [r for r in results if r.get('rs_current', 0) < 1.0]
 
-with col_cross1:
-    st.metric(
-        "🚀 Just Crossed Above 1.0", 
-        len(rs_daily_crossovers['just_above']),
-        help="Just started outperforming VNINDEX"
-    )
-    if rs_daily_crossovers['just_above']:
-        tickers = [r['ticker'] for r in rs_daily_crossovers['just_above']]
-        st.success(f"**{', '.join(tickers)}**")
+# Get top 10 strongest (highest RS composite above 1.0)
+top_10_strongest = sorted(stocks_above_1, key=lambda x: x.get('rs_current', 0), reverse=True)[:10]
 
-with col_cross2:
-    st.metric(
-        "📈 Near Crossing Above", 
-        len(rs_daily_crossovers['near_above']),
-        help="RS Daily 0.97-1.0, may soon outperform"
-    )
-    if rs_daily_crossovers['near_above']:
-        tickers = [r['ticker'] for r in rs_daily_crossovers['near_above']]
-        st.info(f"{', '.join(tickers)}")
+# Get top 10 weakest (lowest RS composite below 1.0)
+top_10_weakest = sorted(stocks_below_1, key=lambda x: x.get('rs_current', 0))[:10]
 
-with col_cross3:
-    st.metric(
-        "⚠️ Just Crossed Below 1.0", 
-        len(rs_daily_crossovers['just_below']),
-        help="Just started underperforming VNINDEX"
-    )
-    if rs_daily_crossovers['just_below']:
-        tickers = [r['ticker'] for r in rs_daily_crossovers['just_below']]
-        st.error(f"**{', '.join(tickers)}**")
+col_strong, col_weak = st.columns(2)
 
-with col_cross4:
-    st.metric(
-        "📉 Near Crossing Below", 
-        len(rs_daily_crossovers['near_below']),
-        help="RS Daily 1.0-1.03, may soon underperform"
-    )
-    if rs_daily_crossovers['near_below']:
-        tickers = [r['ticker'] for r in rs_daily_crossovers['near_below']]
-        st.warning(f"{', '.join(tickers)}")
+with col_strong:
+    st.markdown("#### 🚀 Top 10 Strongest Outperformers")
+    st.caption(f"RS Composite > 1.0 ({len(stocks_above_1)} total)")
+    
+    if top_10_strongest:
+        for idx, result in enumerate(top_10_strongest, start=1):
+            rs_comp = result.get('rs_current', 0)
+            ticker = result['ticker']
+            rs_perc = result.get('rs_percentile', 0)
+            
+            # Color based on strength
+            if rs_comp >= 1.10:
+                color = "#1B5E20"
+                icon = "🔥"
+            elif rs_comp >= 1.05:
+                color = "#4CAF50"
+                icon = "🚀"
+            else:
+                color = "#8BC34A"
+                icon = "⬆️"
+            
+            st.markdown(f"""
+            <div style="padding: 8px; margin: 4px 0; background: linear-gradient(90deg, {color}15, transparent); 
+                        border-left: 3px solid {color}; border-radius: 4px;">
+                <span style="font-weight: bold; color: {color}; font-size: 14px;">{icon} #{idx} {ticker}</span>
+                <span style="float: right; font-size: 12px; color: #666;">RS: <strong style="color: {color};">{rs_comp:.3f}</strong> | Percentile: {rs_perc:.0f}%</span>
+            </div>
+            """, unsafe_allow_html=True)
+    else:
+        st.info("No stocks currently outperforming VNINDEX")
 
-# Display detailed cards for just crossed stocks (most important signals)
-if rs_daily_crossovers['just_above'] or rs_daily_crossovers['just_below']:
-    with st.expander("📊 View Detailed Cards for Fresh Crossovers", expanded=True):
-        st.markdown("#### 🚀 Just Crossed Above 1.0 (New Outperformers)")
-        if rs_daily_crossovers['just_above']:
-            cols_per_row = 3
-            for idx, result in enumerate(rs_daily_crossovers['just_above'][:15], start=1):
-                if (idx - 1) % cols_per_row == 0:
-                    cols = st.columns(cols_per_row, gap="medium")
-                
-                col = cols[(idx - 1) % cols_per_row]
-                with col:
-                    ticker_escaped = html.escape(result['ticker'])
-                    rs_daily = result.get('rs_daily', np.nan)
-                    rs_perc = result.get('rs_percentile', 0)
-                    
-                    card_html = f'''
-                    <div style="border: 2px solid #4CAF50; border-radius: 12px; padding: 12px; 
-                                background: linear-gradient(135deg, #f5fff5 0%, #e8f5e9 100%); 
-                                box-shadow: 0 4px 12px rgba(76,175,80,0.3); margin-bottom: 16px;">
-                        <div style="font-size: 18px; font-weight: bold; color: #2E7D32; margin-bottom: 8px;">
-                            {ticker_escaped} 🚀
-                        </div>
-                        <div style="font-size: 24px; font-weight: bold; color: #4CAF50; margin-bottom: 8px;">
-                            {result['close']:.2f}
-                        </div>
-                        <div style="font-size: 12px; color: #666; margin-bottom: 4px;">
-                            RS Daily: <strong style="color: #4CAF50;">{rs_daily:.3f}</strong>
-                        </div>
-                        <div style="font-size: 12px; color: #666; margin-bottom: 4px;">
-                            RS Percentile: <strong>{rs_perc:.0f}%</strong>
-                        </div>
-                        <div style="margin-top: 8px; padding: 6px; background: #4CAF50; color: white; 
-                                    border-radius: 6px; text-align: center; font-weight: bold; font-size: 11px;">
-                            ✓ JUST CROSSED ABOVE VNINDEX
-                        </div>
-                    </div>
-                    '''
-                    st.markdown(card_html, unsafe_allow_html=True)
-        else:
-            st.caption("No stocks just crossed above 1.0")
-        
-        st.markdown("#### ⚠️ Just Crossed Below 1.0 (New Underperformers)")
-        if rs_daily_crossovers['just_below']:
-            cols_per_row = 3
-            for idx, result in enumerate(rs_daily_crossovers['just_below'][:15], start=1):
-                if (idx - 1) % cols_per_row == 0:
-                    cols = st.columns(cols_per_row, gap="medium")
-                
-                col = cols[(idx - 1) % cols_per_row]
-                with col:
-                    ticker_escaped = html.escape(result['ticker'])
-                    rs_daily = result.get('rs_daily', np.nan)
-                    rs_perc = result.get('rs_percentile', 0)
-                    
-                    card_html = f'''
-                    <div style="border: 2px solid #F44336; border-radius: 12px; padding: 12px; 
-                                background: linear-gradient(135deg, #fff5f5 0%, #ffebee 100%); 
-                                box-shadow: 0 4px 12px rgba(244,67,54,0.3); margin-bottom: 16px;">
-                        <div style="font-size: 18px; font-weight: bold; color: #C62828; margin-bottom: 8px;">
-                            {ticker_escaped} ⚠️
-                        </div>
-                        <div style="font-size: 24px; font-weight: bold; color: #F44336; margin-bottom: 8px;">
-                            {result['close']:.2f}
-                        </div>
-                        <div style="font-size: 12px; color: #666; margin-bottom: 4px;">
-                            RS Daily: <strong style="color: #F44336;">{rs_daily:.3f}</strong>
-                        </div>
-                        <div style="font-size: 12px; color: #666; margin-bottom: 4px;">
-                            RS Percentile: <strong>{rs_perc:.0f}%</strong>
-                        </div>
-                        <div style="margin-top: 8px; padding: 6px; background: #F44336; color: white; 
-                                    border-radius: 6px; text-align: center; font-weight: bold; font-size: 11px;">
-                            ✗ JUST CROSSED BELOW VNINDEX
-                        </div>
-                    </div>
-                    '''
-                    st.markdown(card_html, unsafe_allow_html=True)
-        else:
-            st.caption("No stocks just crossed below 1.0")
+with col_weak:
+    st.markdown("#### ⚠️ Top 10 Weakest Underperformers")
+    st.caption(f"RS Composite < 1.0 ({len(stocks_below_1)} total)")
+    
+    if top_10_weakest:
+        for idx, result in enumerate(top_10_weakest, start=1):
+            rs_comp = result.get('rs_current', 0)
+            ticker = result['ticker']
+            rs_perc = result.get('rs_percentile', 0)
+            
+            # Color based on weakness
+            if rs_comp <= 0.90:
+                color = "#B71C1C"
+                icon = "🔴"
+            elif rs_comp <= 0.95:
+                color = "#F44336"
+                icon = "⬇️"
+            else:
+                color = "#FF9800"
+                icon = "⚠️"
+            
+            st.markdown(f"""
+            <div style="padding: 8px; margin: 4px 0; background: linear-gradient(90deg, {color}15, transparent); 
+                        border-left: 3px solid {color}; border-radius: 4px;">
+                <span style="font-weight: bold; color: {color}; font-size: 14px;">{icon} #{idx} {ticker}</span>
+                <span style="float: right; font-size: 12px; color: #666;">RS: <strong style="color: {color};">{rs_comp:.3f}</strong> | Percentile: {rs_perc:.0f}%</span>
+            </div>
+            """, unsafe_allow_html=True)
+    else:
+        st.info("No stocks currently underperforming VNINDEX")
 
 st.markdown("---")
 
@@ -1902,53 +1769,84 @@ with col2:
 
 st.markdown("---")
 
-# Methodology Section
-st.markdown("## 📚 Methodology & Rating System")
+# Multi-Period RS Explanation Section
+st.markdown("## 📊 What is Multi-Period Relative Strength?")
 
 st.markdown("""
 <div class="material-card elevation-2" style="padding: 1.5rem; margin-bottom: 1rem;">
-<h3>🎯 Multi-Period Relative Strength Analysis</h3>
+<h3>Multi-Timeframe Momentum Analysis</h3>
 
-**Core Concept - Six Timeframe Momentum:**
-- **Daily RS**: (Stock's 1-day ROC) / (VNINDEX's 1-day ROC) - **Immediate**
-- **1W RS**: (Stock's 5-day ROC) / (VNINDEX's 5-day ROC) - **Very Short-term**
-- **2W RS**: (Stock's 10-day ROC) / (VNINDEX's 10-day ROC) - **Short-term**
-- **1M RS**: (Stock's 21-day ROC) / (VNINDEX's 21-day ROC) - **Medium-Short**
-- **2M RS**: (Stock's 42-day ROC) / (VNINDEX's 42-day ROC) - **Medium-term**
-- **3M RS**: (Stock's 63-day ROC) / (VNINDEX's 63-day ROC) - **Longer-term**
+**Multi-Period RS** measures stock momentum across **six timeframes** for comprehensive analysis:
+
+**Individual Periods:**
+- **Daily RS** (1 day): Immediate momentum - Most responsive to price action
+- **1W RS** (5 days): Very short-term momentum - Immediate strength
+- **2W RS** (10 days): Short-term momentum - Quick swing trades
+- **1M RS** (21 days): Medium-short momentum - Standard swing horizon  
+- **2M RS** (42 days): Medium-term momentum - Position building
+- **3M RS** (63 days): Longer-term momentum - Trend validation
 
 **Composite RS Formula:**
 - Weighted Average: (Daily × 25%) + (1W × 25%) + (2W × 20%) + (1M × 15%) + (2M × 10%) + (3M × 5%)
 - Progressive weighting emphasizes recent momentum while validating with longer trends
 
 **Interpretation:**
-- RS > 1.0: Stock's momentum is **outperforming** the market
-- RS < 1.0: Stock's momentum is **underperforming** the market
-- RS = 1.0: Moving **in line** with the market
+- **RS > 1.0**: Stock is **outperforming** VNINDEX
+- **RS < 1.0**: Stock is **underperforming** VNINDEX
+- **RS = 1.0**: Moving **in line** with the market
 
 **Trend Signals:**
 - **🚀 Accelerating**: Daily > 1W > 1M > 3M (Building momentum - Best setup)
-- **📈 Strengthening**: 1W > 3M (Recent strength emerging)
-- **↔️ Stable**: Consistent across periods
-- **📉 Weakening**: 1W < 3M (Losing momentum)
-- **⬇️ Decelerating**: 1W < 1M < 3M (Breaking down - Exit)
+- **📈 Strengthening**: Short-term RS improving
+- **⬇️ Decelerating**: Daily < 1W < 1M < 3M (Losing momentum - Exit signal)
+- **📉 Weakening**: Short-term RS deteriorating
+- **↔️ Stable**: Consistent RS across timeframes
 
-**Why 5-Period Analysis?**
-- **1W & 2W**: Catch immediate momentum shifts and entry timing
-- **1M**: Standard swing trading horizon
-- **2M & 3M**: Confirm sustainability and filter noise
-- **All Together**: High confidence when all periods align
+</div>
+""", unsafe_allow_html=True)
 
-**Color Coding:**
-- **Green**: RS ≥ 1.02 (Outperforming)
-- **Yellow**: RS 0.98-1.02 (Neutral)
-- **Red**: RS < 0.98 (Underperforming)
+col_guide1, col_guide2 = st.columns(2)
 
-**RS Percentile Ranking:**
-- **Top 20% (RS ≥80%)**: List A - Strong Leaders, highest probability
-- **Top 30% (RS 70-80%)**: List B - Emerging Leaders, watchlist
-- **Bottom 30% (RS ≤30%)**: Laggards - Underperformers, avoid/reduce
-- **Middle Range**: Neutral - no clear edge
+with col_guide1:
+    st.markdown("""
+    <div class="material-card" style="background: linear-gradient(135deg, #e8f5e9 0%, #c8e6c9 100%); 
+                                       padding: 1rem; border-radius: 8px; border-left: 4px solid #4CAF50;">
+        <h4 style="color: #2E7D32; margin-top: 0;">🚀 Outperforming Leaders</h4>
+        <p style="margin: 0; color: #1B5E20;">
+        Stocks with high RS percentile (top 20-30%) are <strong>market leaders</strong>. 
+        Look for RS crossing above MA20 as entry signals, but avoid overextended stocks (RS >10% above MA20).
+        </p>
+    </div>
+    """, unsafe_allow_html=True)
+
+with col_guide2:
+    st.markdown("""
+    <div class="material-card" style="background: linear-gradient(135deg, #ffebee 0%, #ffcdd2 100%); 
+                                       padding: 1rem; border-radius: 8px; border-left: 4px solid #F44336;">
+        <h4 style="color: #C62828; margin-top: 0;">📉 Underperforming Laggards</h4>
+        <p style="margin: 0; color: #B71C1C;">
+        Stocks with low RS percentile (bottom 30%) are <strong>lagging</strong> the market. 
+        Consider reducing exposure or waiting for RS improvement before entry.
+        </p>
+    </div>
+    """, unsafe_allow_html=True)
+
+st.info("💡 **Key Insight:** Strong stocks tend to stay strong, weak stocks tend to stay weak. Focus on relative strength, not just absolute price. The best opportunities are when high-RS stocks pull back to support while maintaining RS leadership.")
+
+st.markdown("---")
+
+# Methodology Section
+st.markdown("## 📚 Methodology & Rating System")
+
+st.markdown("""
+<div class="material-card elevation-2" style="padding: 1.5rem; margin-bottom: 1rem;">
+<h3>🎯 Rating System & Classification</h3>
+
+**RS Percentile Rankings:**
+- **Top 20% (List A)**: Elite leaders - strongest momentum
+- **Top 21-30% (List B)**: Strong performers - watchlist candidates
+- **Middle 31-69%**: Neutral - moving with market
+- **Bottom 30% (Laggards)**: Weak performers - avoid or reduce
 
 </div>
 """, unsafe_allow_html=True)
