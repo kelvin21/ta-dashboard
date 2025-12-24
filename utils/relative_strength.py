@@ -51,8 +51,18 @@ def calculate_relative_strength(stock_close: pd.Series, vnindex_close: pd.Series
         # This shows relative momentum: >1 = outperforming, <1 = underperforming
         rs = (1 + stock_roc) / (1 + vnindex_roc)
         
-        # For early periods without enough data, use simple price ratio
-        rs[:lookback] = aligned['stock'][:lookback] / aligned['vnindex'][:lookback]
+        # For early periods without enough data, use progressive lookback
+        # This prevents abnormally low RS values in the 0-lookback range
+        for i in range(min(lookback, len(aligned))):
+            if i < 2:
+                # First 2 periods: use normalized price ratio starting from 1.0
+                rs.iloc[i] = (aligned['stock'].iloc[i] / aligned['stock'].iloc[0]) / \
+                             (aligned['vnindex'].iloc[i] / aligned['vnindex'].iloc[0])
+            else:
+                # Use progressive lookback (from first value to current)
+                stock_roc_progressive = (aligned['stock'].iloc[i] / aligned['stock'].iloc[0]) - 1
+                vnindex_roc_progressive = (aligned['vnindex'].iloc[i] / aligned['vnindex'].iloc[0]) - 1
+                rs.iloc[i] = (1 + stock_roc_progressive) / (1 + vnindex_roc_progressive)
         
     elif method == 'percentage':
         # Cumulative performance from first value (legacy CRS)
