@@ -392,8 +392,8 @@ def analyze_stock_leadership(ticker: str, analysis_date: datetime, vnindex_data:
     if np.isnan(rs_current):
         return None
     
-    # Store all RS periods in dataframe (use 1M for MA calculations as baseline)
-    df['rs'] = rs_analysis['rs_1m_series']  # 1-month for MA baseline
+    # Store all RS periods in dataframe (use Daily RS for MA calculations and crossover detection)
+    df['rs'] = rs_analysis['rs_daily_series']  # Daily RS for crossover signals
     df['rs_daily'] = rs_analysis['rs_daily_series']
     df['rs_1w'] = rs_analysis['rs_1w_series']
     df['rs_2w'] = rs_analysis['rs_2w_series']
@@ -401,10 +401,10 @@ def analyze_stock_leadership(ticker: str, analysis_date: datetime, vnindex_data:
     df['rs_2m'] = rs_analysis['rs_2m_series']
     df['rs_3m'] = rs_analysis['rs_3m_series']
     
-    # Calculate RS MA20 for crossover detection (using 1M RS)
+    # Calculate RS MA20 for crossover detection (using Daily RS)
     df['rs_ma20'] = df['rs'].rolling(window=20, min_periods=20).mean()
     
-    # Calculate RSI on RS values (to detect overbought RS) - using 1M RS
+    # Calculate RSI on RS values (to detect overbought RS) - using Daily RS
     rs_rsi = calculate_rsi(df['rs'], period=14)
     df['rs_rsi'] = rs_rsi
     
@@ -1235,6 +1235,81 @@ with tab2:
                 # Visual signal badges
                 rs_perc_badge = f'<span style="background: {momentum_color}; color: white; padding: 2px 8px; border-radius: 8px; font-size: 10px; font-weight: bold;">RS: {result["rs_percentile"]:.0f}%</span>'
                 
+                # Multi-period RS badges (Daily, 1W, 2W, 1M, 2M, 3M)
+                rs_daily = result.get('rs_daily', np.nan)
+                rs_1w = result.get('rs_1w', np.nan)
+                rs_2w = result.get('rs_2w', np.nan)
+                rs_1m = result.get('rs_1m', np.nan)
+                rs_2m = result.get('rs_2m', np.nan)
+                rs_3m = result.get('rs_3m', np.nan)
+                rs_trend = result.get('rs_trend', 'N/A')
+                
+                # Color code based on value relative to 1.0
+                def get_rs_color_neutral(rs_val):
+                    if np.isnan(rs_val):
+                        return '#9E9E9E'
+                    elif rs_val >= 1.05:
+                        return '#4CAF50'
+                    elif rs_val >= 1.02:
+                        return '#8BC34A'
+                    elif rs_val >= 0.98:
+                        return '#FFC107'
+                    elif rs_val >= 0.95:
+                        return '#FF9800'
+                    else:
+                        return '#F44336'
+                
+                rs_daily_color = get_rs_color_neutral(rs_daily)
+                rs_1w_color = get_rs_color_neutral(rs_1w)
+                rs_2w_color = get_rs_color_neutral(rs_2w)
+                rs_1m_color = get_rs_color_neutral(rs_1m)
+                rs_2m_color = get_rs_color_neutral(rs_2m)
+                rs_3m_color = get_rs_color_neutral(rs_3m)
+                
+                if not np.isnan(rs_daily):
+                    rs_daily_badge = f'<span style="background: {rs_daily_color}; color: white; padding: 2px 5px; border-radius: 5px; font-size: 8.5px; font-weight: bold;">D: {rs_daily:.2f}</span>'
+                else:
+                    rs_daily_badge = '<span style="background: #9E9E9E; color: white; padding: 2px 5px; border-radius: 5px; font-size: 8.5px;">D: N/A</span>'
+                
+                if not np.isnan(rs_1w):
+                    rs_1w_badge = f'<span style="background: {rs_1w_color}; color: white; padding: 2px 5px; border-radius: 5px; font-size: 8.5px; font-weight: bold;">1W: {rs_1w:.2f}</span>'
+                else:
+                    rs_1w_badge = '<span style="background: #9E9E9E; color: white; padding: 2px 5px; border-radius: 5px; font-size: 8.5px;">1W: N/A</span>'
+                
+                if not np.isnan(rs_2w):
+                    rs_2w_badge = f'<span style="background: {rs_2w_color}; color: white; padding: 2px 5px; border-radius: 5px; font-size: 8.5px; font-weight: bold;">2W: {rs_2w:.2f}</span>'
+                else:
+                    rs_2w_badge = '<span style="background: #9E9E9E; color: white; padding: 2px 5px; border-radius: 5px; font-size: 8.5px;">2W: N/A</span>'
+                
+                if not np.isnan(rs_1m):
+                    rs_1m_badge = f'<span style="background: {rs_1m_color}; color: white; padding: 2px 5px; border-radius: 5px; font-size: 8.5px; font-weight: bold;">1M: {rs_1m:.2f}</span>'
+                else:
+                    rs_1m_badge = '<span style="background: #9E9E9E; color: white; padding: 2px 5px; border-radius: 5px; font-size: 8.5px;">1M: N/A</span>'
+                
+                if not np.isnan(rs_2m):
+                    rs_2m_badge = f'<span style="background: {rs_2m_color}; color: white; padding: 2px 5px; border-radius: 5px; font-size: 8.5px; font-weight: bold;">2M: {rs_2m:.2f}</span>'
+                else:
+                    rs_2m_badge = '<span style="background: #9E9E9E; color: white; padding: 2px 5px; border-radius: 5px; font-size: 8.5px;">2M: N/A</span>'
+                
+                if not np.isnan(rs_3m):
+                    rs_3m_badge = f'<span style="background: {rs_3m_color}; color: white; padding: 2px 5px; border-radius: 5px; font-size: 8.5px; font-weight: bold;">3M: {rs_3m:.2f}</span>'
+                else:
+                    rs_3m_badge = '<span style="background: #9E9E9E; color: white; padding: 2px 5px; border-radius: 5px; font-size: 8.5px;">3M: N/A</span>'
+                
+                # RS Trend badge
+                if rs_trend == 'Accelerating':
+                    rs_trend_badge = '<span style="background: #1B5E20; color: white; padding: 2px 6px; border-radius: 6px; font-size: 9px; font-weight: bold;">🚀 Accelerating</span>'
+                elif rs_trend == 'Strengthening':
+                    rs_trend_badge = '<span style="background: #4CAF50; color: white; padding: 2px 6px; border-radius: 6px; font-size: 9px; font-weight: bold;">📈 Strengthening</span>'
+                elif rs_trend == 'Decelerating':
+                    rs_trend_badge = '<span style="background: #F44336; color: white; padding: 2px 6px; border-radius: 6px; font-size: 9px; font-weight: bold;">⬇️ Decelerating</span>'
+                elif rs_trend == 'Weakening':
+                    rs_trend_badge = '<span style="background: #FF9800; color: white; padding: 2px 6px; border-radius: 6px; font-size: 9px; font-weight: bold;">📉 Weakening</span>'
+                elif rs_trend == 'Stable':
+                    rs_trend_badge = '<span style="background: #2196F3; color: white; padding: 2px 6px; border-radius: 6px; font-size: 9px; font-weight: bold;">↔️ Stable</span>'
+                else:
+                    rs_trend_badge = '<span style="background: #9E9E9E; color: white; padding: 2px 6px; border-radius: 6px; font-size: 9px;">Trend: N/A</span>'
+                
                 # 5-day RS momentum badge
                 rs_5d_change = result.get('rs_5d_change', np.nan)
                 if not np.isnan(rs_5d_change):
@@ -1244,6 +1319,81 @@ with tab2:
                         momentum_5d_badge = f'<span style="background: #F44336; color: white; padding: 2px 8px; border-radius: 8px; font-size: 10px; font-weight: bold;">5D: {rs_5d_change:.1f}% ▼</span>'
                 else:
                     momentum_5d_badge = '<span style="background: #9E9E9E; color: white; padding: 2px 8px; border-radius: 8px; font-size: 10px; font-weight: bold;">5D: N/A</span>'
+                
+                # Multi-period RS badges (Daily, 1W, 2W, 1M, 2M, 3M)
+                rs_daily = result.get('rs_daily', np.nan)
+                rs_1w = result.get('rs_1w', np.nan)
+                rs_2w = result.get('rs_2w', np.nan)
+                rs_1m = result.get('rs_1m', np.nan)
+                rs_2m = result.get('rs_2m', np.nan)
+                rs_3m = result.get('rs_3m', np.nan)
+                rs_trend = result.get('rs_trend', 'N/A')
+                
+                # Color code based on value relative to 1.0
+                def get_rs_color_under(rs_val):
+                    if np.isnan(rs_val):
+                        return '#9E9E9E'
+                    elif rs_val >= 1.05:
+                        return '#4CAF50'
+                    elif rs_val >= 1.02:
+                        return '#8BC34A'
+                    elif rs_val >= 0.98:
+                        return '#FFC107'
+                    elif rs_val >= 0.95:
+                        return '#FF9800'
+                    else:
+                        return '#F44336'
+                
+                rs_daily_color = get_rs_color_under(rs_daily)
+                rs_1w_color = get_rs_color_under(rs_1w)
+                rs_2w_color = get_rs_color_under(rs_2w)
+                rs_1m_color = get_rs_color_under(rs_1m)
+                rs_2m_color = get_rs_color_under(rs_2m)
+                rs_3m_color = get_rs_color_under(rs_3m)
+                
+                if not np.isnan(rs_daily):
+                    rs_daily_badge = f'<span style="background: {rs_daily_color}; color: white; padding: 2px 5px; border-radius: 5px; font-size: 8.5px; font-weight: bold;">D: {rs_daily:.2f}</span>'
+                else:
+                    rs_daily_badge = '<span style="background: #9E9E9E; color: white; padding: 2px 5px; border-radius: 5px; font-size: 8.5px;">D: N/A</span>'
+                
+                if not np.isnan(rs_1w):
+                    rs_1w_badge = f'<span style="background: {rs_1w_color}; color: white; padding: 2px 5px; border-radius: 5px; font-size: 8.5px; font-weight: bold;">1W: {rs_1w:.2f}</span>'
+                else:
+                    rs_1w_badge = '<span style="background: #9E9E9E; color: white; padding: 2px 5px; border-radius: 5px; font-size: 8.5px;">1W: N/A</span>'
+                
+                if not np.isnan(rs_2w):
+                    rs_2w_badge = f'<span style="background: {rs_2w_color}; color: white; padding: 2px 5px; border-radius: 5px; font-size: 8.5px; font-weight: bold;">2W: {rs_2w:.2f}</span>'
+                else:
+                    rs_2w_badge = '<span style="background: #9E9E9E; color: white; padding: 2px 5px; border-radius: 5px; font-size: 8.5px;">2W: N/A</span>'
+                
+                if not np.isnan(rs_1m):
+                    rs_1m_badge = f'<span style="background: {rs_1m_color}; color: white; padding: 2px 5px; border-radius: 5px; font-size: 8.5px; font-weight: bold;">1M: {rs_1m:.2f}</span>'
+                else:
+                    rs_1m_badge = '<span style="background: #9E9E9E; color: white; padding: 2px 5px; border-radius: 5px; font-size: 8.5px;">1M: N/A</span>'
+                
+                if not np.isnan(rs_2m):
+                    rs_2m_badge = f'<span style="background: {rs_2m_color}; color: white; padding: 2px 5px; border-radius: 5px; font-size: 8.5px; font-weight: bold;">2M: {rs_2m:.2f}</span>'
+                else:
+                    rs_2m_badge = '<span style="background: #9E9E9E; color: white; padding: 2px 5px; border-radius: 5px; font-size: 8.5px;">2M: N/A</span>'
+                
+                if not np.isnan(rs_3m):
+                    rs_3m_badge = f'<span style="background: {rs_3m_color}; color: white; padding: 2px 5px; border-radius: 5px; font-size: 8.5px; font-weight: bold;">3M: {rs_3m:.2f}</span>'
+                else:
+                    rs_3m_badge = '<span style="background: #9E9E9E; color: white; padding: 2px 5px; border-radius: 5px; font-size: 8.5px;">3M: N/A</span>'
+                
+                # RS Trend badge
+                if rs_trend == 'Accelerating':
+                    rs_trend_badge = '<span style="background: #1B5E20; color: white; padding: 2px 6px; border-radius: 6px; font-size: 9px; font-weight: bold;">🚀 Accelerating</span>'
+                elif rs_trend == 'Strengthening':
+                    rs_trend_badge = '<span style="background: #4CAF50; color: white; padding: 2px 6px; border-radius: 6px; font-size: 9px; font-weight: bold;">📈 Strengthening</span>'
+                elif rs_trend == 'Decelerating':
+                    rs_trend_badge = '<span style="background: #F44336; color: white; padding: 2px 6px; border-radius: 6px; font-size: 9px; font-weight: bold;">⬇️ Decelerating</span>'
+                elif rs_trend == 'Weakening':
+                    rs_trend_badge = '<span style="background: #FF9800; color: white; padding: 2px 6px; border-radius: 6px; font-size: 9px; font-weight: bold;">📉 Weakening</span>'
+                elif rs_trend == 'Stable':
+                    rs_trend_badge = '<span style="background: #2196F3; color: white; padding: 2px 6px; border-radius: 6px; font-size: 9px; font-weight: bold;">↔️ Stable</span>'
+                else:
+                    rs_trend_badge = '<span style="background: #9E9E9E; color: white; padding: 2px 6px; border-radius: 6px; font-size: 9px;">Trend: N/A</span>'
                 
                 # RS RSI badge
                 rs_rsi_value = result.get('rs_rsi', np.nan)
@@ -1290,7 +1440,7 @@ with tab2:
                     daily_rsi_badge = '<span style="background: #9E9E9E; color: white; padding: 2px 8px; border-radius: 8px; font-size: 10px; font-weight: bold;">Daily RSI: N/A</span>'
                 
                 # Create card HTML with neutral styling
-                card_html = f'''<div style="border: 1px solid #BDBDBD; border-radius: 12px; padding: 14px; background: white; box-shadow: 0 2px 8px rgba(158,158,158,0.2); margin-bottom: 16px; min-height: 320px; display: flex; flex-direction: column;"><div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;"><div style="display: flex; align-items: center; gap: 8px;"><span style="font-size: 18px; font-weight: bold; color: #616161;">{ticker_escaped}</span><span style="font-size: 16px; color: {arrow_color};">{arrow}</span></div><div style="text-align: right; font-size: 14px;">{stars}</div></div><div style="margin-bottom: 10px;"><span style="background: {momentum_color}; color: white; padding: 3px 10px; border-radius: 12px; font-size: 11px; font-weight: 500;">⚖ {momentum_badge}</span>{warning_badge}</div><div style="font-size: 28px; font-weight: bold; color: #616161; margin-bottom: 8px;">{result['close']:.2f}</div><div style="font-size: 12px; color: #666; margin-bottom: 8px;">{rs_status_text}</div><div style="display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 8px;">{rs_perc_badge}{momentum_5d_badge}</div><div style="display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 8px;">{rs_rsi_badge}{crossover_badge}</div><div style="display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 10px;">{obv_badge}{daily_rsi_badge}</div><div style="margin-top: auto;"><div style="font-size: 11px; color: #666; line-height: 1.4; border-top: 1px solid #BDBDBD; padding-top: 8px;">{description_escaped}</div></div></div>'''
+                card_html = f'''<div style="border: 1px solid #BDBDBD; border-radius: 12px; padding: 14px; background: white; box-shadow: 0 2px 8px rgba(158,158,158,0.2); margin-bottom: 16px; min-height: 380px; display: flex; flex-direction: column;"><div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;"><div style="display: flex; align-items: center; gap: 8px;"><span style="font-size: 18px; font-weight: bold; color: #616161;">{ticker_escaped}</span><span style="font-size: 16px; color: {arrow_color};">{arrow}</span></div><div style="text-align: right; font-size: 14px;">{stars}</div></div><div style="margin-bottom: 10px;"><span style="background: {momentum_color}; color: white; padding: 3px 10px; border-radius: 12px; font-size: 11px; font-weight: 500;">⚖ {momentum_badge}</span>{warning_badge}</div><div style="font-size: 28px; font-weight: bold; color: #616161; margin-bottom: 8px;">{result['close']:.2f}</div><div style="font-size: 12px; color: #666; margin-bottom: 8px;">{rs_status_text}</div><div style="display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 6px;">{rs_perc_badge}{momentum_5d_badge}</div><div style="display: flex; flex-wrap: wrap; gap: 2px; margin-bottom: 6px; padding: 4px; background: #F5F5F5; border-radius: 6px;">{rs_daily_badge}{rs_1w_badge}{rs_2w_badge}{rs_1m_badge}{rs_2m_badge}{rs_3m_badge}<div style="margin-left: 4px;">{rs_trend_badge}</div></div><div style="display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 8px;">{rs_rsi_badge}{crossover_badge}</div><div style="display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 10px;">{obv_badge}{daily_rsi_badge}</div><div style="margin-top: auto;"><div style="font-size: 11px; color: #666; line-height: 1.4; border-top: 1px solid #BDBDBD; padding-top: 8px;">{description_escaped}</div></div></div>'''
                 
                 st.markdown(card_html, unsafe_allow_html=True)
                 
@@ -1485,7 +1635,7 @@ with tab3:
                     daily_rsi_badge = '<span style="background: #9E9E9E; color: white; padding: 2px 8px; border-radius: 8px; font-size: 10px; font-weight: bold;">Daily RSI: N/A</span>'
                 
                 # Create card HTML
-                card_html = f'''<div style="border: 1px solid #ffcdd2; border-radius: 12px; padding: 14px; background: white; box-shadow: 0 2px 8px rgba(244,67,54,0.1); margin-bottom: 16px; min-height: 320px; display: flex; flex-direction: column;"><div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;"><div style="display: flex; align-items: center; gap: 8px;"><span style="font-size: 18px; font-weight: bold; color: #F44336;">{ticker_escaped}</span><span style="font-size: 16px; color: {arrow_color};">{arrow}</span></div><div style="text-align: right; font-size: 14px;">{stars}</div></div><div style="margin-bottom: 10px;"><span style="background: {momentum_color}; color: white; padding: 3px 10px; border-radius: 12px; font-size: 11px; font-weight: 500;">✗ {momentum_badge}</span>{warning_badge}</div><div style="font-size: 28px; font-weight: bold; color: #F44336; margin-bottom: 8px;">{result['close']:.2f}</div><div style="font-size: 12px; color: #666; margin-bottom: 8px;">{rs_status_text}</div><div style="display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 8px;">{rs_perc_badge}{momentum_5d_badge}</div><div style="display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 8px;">{rs_rsi_badge}{crossover_badge}</div><div style="display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 10px;">{obv_badge}{daily_rsi_badge}</div><div style="margin-top: auto;"><div style="font-size: 11px; color: #666; line-height: 1.4; border-top: 1px solid #ffcdd2; padding-top: 8px;">{description_escaped}</div></div></div>'''                
+                card_html = f'''<div style="border: 1px solid #ffcdd2; border-radius: 12px; padding: 14px; background: white; box-shadow: 0 2px 8px rgba(244,67,54,0.1); margin-bottom: 16px; min-height: 380px; display: flex; flex-direction: column;"><div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;"><div style="display: flex; align-items: center; gap: 8px;"><span style="font-size: 18px; font-weight: bold; color: #F44336;">{ticker_escaped}</span><span style="font-size: 16px; color: {arrow_color};">{arrow}</span></div><div style="text-align: right; font-size: 14px;">{stars}</div></div><div style="margin-bottom: 10px;"><span style="background: {momentum_color}; color: white; padding: 3px 10px; border-radius: 12px; font-size: 11px; font-weight: 500;">✗ {momentum_badge}</span>{warning_badge}</div><div style="font-size: 28px; font-weight: bold; color: #F44336; margin-bottom: 8px;">{result['close']:.2f}</div><div style="font-size: 12px; color: #666; margin-bottom: 8px;">{rs_status_text}</div><div style="display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 6px;">{rs_perc_badge}{momentum_5d_badge}</div><div style="display: flex; flex-wrap: wrap; gap: 2px; margin-bottom: 6px; padding: 4px; background: #F5F5F5; border-radius: 6px;">{rs_daily_badge}{rs_1w_badge}{rs_2w_badge}{rs_1m_badge}{rs_2m_badge}{rs_3m_badge}<div style="margin-left: 4px;">{rs_trend_badge}</div></div><div style="display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 8px;">{rs_rsi_badge}{crossover_badge}</div><div style="display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 10px;">{obv_badge}{daily_rsi_badge}</div><div style="margin-top: auto;"><div style="font-size: 11px; color: #666; line-height: 1.4; border-top: 1px solid #ffcdd2; padding-top: 8px;">{description_escaped}</div></div></div>'''                
                 st.markdown(card_html, unsafe_allow_html=True)
                 
                 # Add chart expander below the card
