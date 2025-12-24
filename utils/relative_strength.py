@@ -76,7 +76,7 @@ def calculate_relative_strength(stock_close: pd.Series, vnindex_close: pd.Series
 
 def calculate_multi_period_rs(stock_close: pd.Series, vnindex_close: pd.Series) -> Dict:
     """
-    Calculate RS across multiple time periods (1M, 2M, 3M).
+    Calculate RS across multiple time periods (1W, 2W, 1M, 2M, 3M).
     
     Returns current RS values for each period plus composite score.
     
@@ -85,32 +85,42 @@ def calculate_multi_period_rs(stock_close: pd.Series, vnindex_close: pd.Series) 
         vnindex_close: VNINDEX closing prices
     
     Returns:
-        Dictionary with rs_1m, rs_2m, rs_3m, rs_composite, and trend
+        Dictionary with rs_1w, rs_2w, rs_1m, rs_2m, rs_3m, rs_composite, and trend
     """
     # Calculate RS for each period
+    rs_1w = calculate_relative_strength(stock_close, vnindex_close, method='momentum', lookback=5)
+    rs_2w = calculate_relative_strength(stock_close, vnindex_close, method='momentum', lookback=10)
     rs_1m = calculate_relative_strength(stock_close, vnindex_close, method='momentum', lookback=21)
     rs_2m = calculate_relative_strength(stock_close, vnindex_close, method='momentum', lookback=42)
     rs_3m = calculate_relative_strength(stock_close, vnindex_close, method='momentum', lookback=63)
     
     # Get current values
+    rs_1w_current = rs_1w.iloc[-1] if not rs_1w.empty else np.nan
+    rs_2w_current = rs_2w.iloc[-1] if not rs_2w.empty else np.nan
     rs_1m_current = rs_1m.iloc[-1] if not rs_1m.empty else np.nan
     rs_2m_current = rs_2m.iloc[-1] if not rs_2m.empty else np.nan
     rs_3m_current = rs_3m.iloc[-1] if not rs_3m.empty else np.nan
     
-    # Calculate composite RS (weighted average: 1M=50%, 2M=30%, 3M=20%)
-    # Emphasize recent momentum
+    # Calculate composite RS (weighted average: 1W=30%, 2W=25%, 1M=25%, 2M=15%, 3M=5%)
+    # Emphasize recent momentum progressively
     valid_values = []
     weights = []
     
+    if not np.isnan(rs_1w_current):
+        valid_values.append(rs_1w_current)
+        weights.append(0.30)  # 30% weight on 1-week
+    if not np.isnan(rs_2w_current):
+        valid_values.append(rs_2w_current)
+        weights.append(0.25)  # 25% weight on 2-week
     if not np.isnan(rs_1m_current):
         valid_values.append(rs_1m_current)
-        weights.append(0.5)
+        weights.append(0.25)  # 25% weight on 1-month
     if not np.isnan(rs_2m_current):
         valid_values.append(rs_2m_current)
-        weights.append(0.3)
+        weights.append(0.15)  # 15% weight on 2-month
     if not np.isnan(rs_3m_current):
         valid_values.append(rs_3m_current)
-        weights.append(0.2)
+        weights.append(0.05)  # 5% weight on 3-month
     
     if valid_values:
         # Normalize weights
@@ -120,26 +130,30 @@ def calculate_multi_period_rs(stock_close: pd.Series, vnindex_close: pd.Series) 
     else:
         rs_composite = np.nan
     
-    # Determine trend (accelerating/decelerating/stable)
+    # Determine trend (accelerating/decelerating/stable) - using 1W, 1M, 3M
     trend = "N/A"
-    if not np.isnan(rs_1m_current) and not np.isnan(rs_3m_current):
-        if rs_1m_current > rs_2m_current > rs_3m_current:
+    if not np.isnan(rs_1w_current) and not np.isnan(rs_1m_current) and not np.isnan(rs_3m_current):
+        if rs_1w_current > rs_1m_current > rs_3m_current:
             trend = "Accelerating"  # Getting stronger
-        elif rs_1m_current < rs_2m_current < rs_3m_current:
+        elif rs_1w_current < rs_1m_current < rs_3m_current:
             trend = "Decelerating"  # Getting weaker
-        elif rs_1m_current > rs_3m_current:
+        elif rs_1w_current > rs_3m_current:
             trend = "Strengthening"
-        elif rs_1m_current < rs_3m_current:
+        elif rs_1w_current < rs_3m_current:
             trend = "Weakening"
         else:
             trend = "Stable"
     
     return {
+        'rs_1w': rs_1w_current,
+        'rs_2w': rs_2w_current,
         'rs_1m': rs_1m_current,
         'rs_2m': rs_2m_current,
         'rs_3m': rs_3m_current,
         'rs_composite': rs_composite,
         'rs_trend': trend,
+        'rs_1w_series': rs_1w,
+        'rs_2w_series': rs_2w,
         'rs_1m_series': rs_1m,
         'rs_2m_series': rs_2m,
         'rs_3m_series': rs_3m

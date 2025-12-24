@@ -74,24 +74,26 @@ st.markdown("""
 # Summary/Introduction Section
 st.markdown("### 📊 What is Multi-Period Relative Strength?")
 st.write("""
-**Multi-Period RS** measures stock momentum across **three timeframes** (1M, 2M, 3M) for comprehensive analysis:
+**Multi-Period RS** measures stock momentum across **five timeframes** (1W, 2W, 1M, 2M, 3M) for comprehensive analysis:
 
 **Individual Periods:**
-- **1M RS** (21 days): Short-term momentum - Most recent strength
-- **2M RS** (42 days): Medium-term momentum - Swing trading horizon  
-- **3M RS** (63 days): Longer-term momentum - Position building trend
+- **1W RS** (5 days): Very short-term momentum - Immediate strength
+- **2W RS** (10 days): Short-term momentum - Quick swing trades
+- **1M RS** (21 days): Medium-short momentum - Standard swing horizon  
+- **2M RS** (42 days): Medium-term momentum - Position building
+- **3M RS** (63 days): Longer-term momentum - Trend validation
 
-**Composite RS** = Weighted average (1M: 50%, 2M: 30%, 3M: 20%)
-- Emphasizes recent momentum while considering longer trends
+**Composite RS** = Weighted average (1W: 30%, 2W: 25%, 1M: 25%, 2M: 15%, 3M: 5%)
+- Emphasizes recent momentum with progressive weighting
 - **RS > 1.0**: Outperforming VNINDEX
 - **RS < 1.0**: Underperforming VNINDEX
 
 **Trend Analysis:**
-- **Accelerating**: 1M > 2M > 3M (Getting stronger - Best setup)
-- **Decelerating**: 1M < 2M < 3M (Getting weaker - Exit signal)
+- **Accelerating**: 1W > 1M > 3M (Getting stronger - Best setup)
+- **Decelerating**: 1W < 1M < 3M (Getting weaker - Exit signal)
 
-This multi-timeframe approach captures momentum **consistency** and **direction**, 
-providing better ticker comparison than single-period analysis.
+This multi-timeframe approach captures momentum **consistency** and **direction** from short-term
+reactivity to longer-term trends, providing superior ticker comparison.
 """)
 
 col_intro1, col_intro2 = st.columns(2)
@@ -307,24 +309,26 @@ def analyze_stock_leadership(ticker: str, analysis_date: datetime, vnindex_data:
     if df.empty or len(df) < 20:
         return None
     
-    # Calculate Multi-Period RS (1M, 2M, 3M) for comprehensive momentum analysis
+    # Calculate Multi-Period RS (1W, 2W, 1M, 2M, 3M) for comprehensive momentum analysis
     rs_analysis = calculate_multi_period_rs(df['close'], vnindex_data['close'])
     
-    # Use composite RS as primary metric (weighted: 1M=50%, 2M=30%, 3M=20%)
+    # Use composite RS as primary metric (weighted: 1W=30%, 2W=25%, 1M=25%, 2M=15%, 3M=5%)
     rs_current = rs_analysis['rs_composite']
     if np.isnan(rs_current):
         return None
     
-    # Store all RS periods in dataframe (use 2M for MA calculations)
-    df['rs'] = rs_analysis['rs_2m_series']  # 2-month for MA baseline
+    # Store all RS periods in dataframe (use 1M for MA calculations as baseline)
+    df['rs'] = rs_analysis['rs_1m_series']  # 1-month for MA baseline
+    df['rs_1w'] = rs_analysis['rs_1w_series']
+    df['rs_2w'] = rs_analysis['rs_2w_series']
     df['rs_1m'] = rs_analysis['rs_1m_series']
     df['rs_2m'] = rs_analysis['rs_2m_series']
     df['rs_3m'] = rs_analysis['rs_3m_series']
     
-    # Calculate RS MA20 for crossover detection (using 2M RS)
+    # Calculate RS MA20 for crossover detection (using 1M RS)
     df['rs_ma20'] = df['rs'].rolling(window=20, min_periods=20).mean()
     
-    # Calculate RSI on RS values (to detect overbought RS) - using 2M RS
+    # Calculate RSI on RS values (to detect overbought RS) - using 1M RS
     rs_rsi = calculate_rsi(df['rs'], period=14)
     df['rs_rsi'] = rs_rsi
     
@@ -419,7 +423,9 @@ def analyze_stock_leadership(ticker: str, analysis_date: datetime, vnindex_data:
     return {
         'ticker': ticker,
         'close': current['close'],
-        'rs_current': rs_current,  # Composite RS (weighted 1M, 2M, 3M)
+        'rs_current': rs_current,  # Composite RS (weighted 1W, 2W, 1M, 2M, 3M)
+        'rs_1w': rs_analysis['rs_1w'],
+        'rs_2w': rs_analysis['rs_2w'],
         'rs_1m': rs_analysis['rs_1m'],
         'rs_2m': rs_analysis['rs_2m'],
         'rs_3m': rs_analysis['rs_3m'],
@@ -876,7 +882,9 @@ with tab1:
                 else:
                     rs_perc_badge = f'<span style="background: #9E9E9E; color: white; padding: 2px 8px; border-radius: 8px; font-size: 10px; font-weight: bold;">RS: {rs_perc:.0f}%</span>'
                 
-                # Multi-period RS badges (1M, 2M, 3M)
+                # Multi-period RS badges (1W, 2W, 1M, 2M, 3M)
+                rs_1w = result.get('rs_1w', np.nan)
+                rs_2w = result.get('rs_2w', np.nan)
                 rs_1m = result.get('rs_1m', np.nan)
                 rs_2m = result.get('rs_2m', np.nan)
                 rs_3m = result.get('rs_3m', np.nan)
@@ -897,24 +905,36 @@ with tab1:
                     else:
                         return '#F44336'  # Red
                 
+                rs_1w_color = get_rs_color(rs_1w)
+                rs_2w_color = get_rs_color(rs_2w)
                 rs_1m_color = get_rs_color(rs_1m)
                 rs_2m_color = get_rs_color(rs_2m)
                 rs_3m_color = get_rs_color(rs_3m)
                 
-                if not np.isnan(rs_1m):
-                    rs_1m_badge = f'<span style="background: {rs_1m_color}; color: white; padding: 2px 6px; border-radius: 6px; font-size: 9px; font-weight: bold;">1M: {rs_1m:.2f}</span>'
+                if not np.isnan(rs_1w):
+                    rs_1w_badge = f'<span style="background: {rs_1w_color}; color: white; padding: 2px 5px; border-radius: 5px; font-size: 8.5px; font-weight: bold;">1W: {rs_1w:.2f}</span>'
                 else:
-                    rs_1m_badge = '<span style="background: #9E9E9E; color: white; padding: 2px 6px; border-radius: 6px; font-size: 9px;">1M: N/A</span>'
+                    rs_1w_badge = '<span style="background: #9E9E9E; color: white; padding: 2px 5px; border-radius: 5px; font-size: 8.5px;">1W: N/A</span>'
+                
+                if not np.isnan(rs_2w):
+                    rs_2w_badge = f'<span style="background: {rs_2w_color}; color: white; padding: 2px 5px; border-radius: 5px; font-size: 8.5px; font-weight: bold;">2W: {rs_2w:.2f}</span>'
+                else:
+                    rs_2w_badge = '<span style="background: #9E9E9E; color: white; padding: 2px 5px; border-radius: 5px; font-size: 8.5px;">2W: N/A</span>'
+                
+                if not np.isnan(rs_1m):
+                    rs_1m_badge = f'<span style="background: {rs_1m_color}; color: white; padding: 2px 5px; border-radius: 5px; font-size: 8.5px; font-weight: bold;">1M: {rs_1m:.2f}</span>'
+                else:
+                    rs_1m_badge = '<span style="background: #9E9E9E; color: white; padding: 2px 5px; border-radius: 5px; font-size: 8.5px;">1M: N/A</span>'
                 
                 if not np.isnan(rs_2m):
-                    rs_2m_badge = f'<span style="background: {rs_2m_color}; color: white; padding: 2px 6px; border-radius: 6px; font-size: 9px; font-weight: bold;">2M: {rs_2m:.2f}</span>'
+                    rs_2m_badge = f'<span style="background: {rs_2m_color}; color: white; padding: 2px 5px; border-radius: 5px; font-size: 8.5px; font-weight: bold;">2M: {rs_2m:.2f}</span>'
                 else:
-                    rs_2m_badge = '<span style="background: #9E9E9E; color: white; padding: 2px 6px; border-radius: 6px; font-size: 9px;">2M: N/A</span>'
+                    rs_2m_badge = '<span style="background: #9E9E9E; color: white; padding: 2px 5px; border-radius: 5px; font-size: 8.5px;">2M: N/A</span>'
                 
                 if not np.isnan(rs_3m):
-                    rs_3m_badge = f'<span style="background: {rs_3m_color}; color: white; padding: 2px 6px; border-radius: 6px; font-size: 9px; font-weight: bold;">3M: {rs_3m:.2f}</span>'
+                    rs_3m_badge = f'<span style="background: {rs_3m_color}; color: white; padding: 2px 5px; border-radius: 5px; font-size: 8.5px; font-weight: bold;">3M: {rs_3m:.2f}</span>'
                 else:
-                    rs_3m_badge = '<span style="background: #9E9E9E; color: white; padding: 2px 6px; border-radius: 6px; font-size: 9px;">3M: N/A</span>'
+                    rs_3m_badge = '<span style="background: #9E9E9E; color: white; padding: 2px 5px; border-radius: 5px; font-size: 8.5px;">3M: N/A</span>'
                 
                 # RS Trend badge
                 if rs_trend == 'Accelerating':
@@ -999,7 +1019,7 @@ with tab1:
                     daily_rsi_badge = '<span style="background: #9E9E9E; color: white; padding: 2px 8px; border-radius: 8px; font-size: 10px; font-weight: bold;">Daily RSI: N/A</span>'
                 
                 # Create card HTML with visual signals
-                card_html = f'''<div style="border: 1px solid #e0e0e0; border-radius: 12px; padding: 14px; background: white; box-shadow: 0 2px 8px rgba(0,0,0,0.1); margin-bottom: 16px; min-height: 360px; display: flex; flex-direction: column;"><div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;"><div style="display: flex; align-items: center; gap: 8px;"><span style="font-size: 18px; font-weight: bold; color: #1976D2;">{ticker_escaped}</span><span style="font-size: 16px; color: {arrow_color};">{arrow}</span></div><div style="text-align: right; font-size: 14px;">{stars}</div></div><div style="margin-bottom: 10px;"><span style="background: {momentum_color}; color: white; padding: 3px 10px; border-radius: 12px; font-size: 11px; font-weight: 500;">✓ {momentum_badge}</span>{warning_badge}</div><div style="font-size: 28px; font-weight: bold; color: #1976D2; margin-bottom: 8px;">{result['close']:.2f}</div><div style="font-size: 12px; color: #666; margin-bottom: 8px;">{rs_status_text}</div><div style="display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 6px;">{rs_perc_badge}{momentum_5d_badge}</div><div style="display: flex; flex-wrap: wrap; gap: 3px; margin-bottom: 6px; padding: 4px; background: #F5F5F5; border-radius: 6px;">{rs_1m_badge}{rs_2m_badge}{rs_3m_badge}{rs_trend_badge}</div><div style="display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 8px;">{rs_rsi_badge}{crossover_badge}</div><div style="display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 10px;">{obv_badge}{daily_rsi_badge}</div><div style="margin-top: auto;"><div style="font-size: 11px; color: #666; line-height: 1.4; border-top: 1px solid #e0e0e0; padding-top: 8px;">{description_escaped}</div></div></div>'''
+                card_html = f'''<div style="border: 1px solid #e0e0e0; border-radius: 12px; padding: 14px; background: white; box-shadow: 0 2px 8px rgba(0,0,0,0.1); margin-bottom: 16px; min-height: 380px; display: flex; flex-direction: column;"><div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;"><div style="display: flex; align-items: center; gap: 8px;"><span style="font-size: 18px; font-weight: bold; color: #1976D2;">{ticker_escaped}</span><span style="font-size: 16px; color: {arrow_color};">{arrow}</span></div><div style="text-align: right; font-size: 14px;">{stars}</div></div><div style="margin-bottom: 10px;"><span style="background: {momentum_color}; color: white; padding: 3px 10px; border-radius: 12px; font-size: 11px; font-weight: 500;">✓ {momentum_badge}</span>{warning_badge}</div><div style="font-size: 28px; font-weight: bold; color: #1976D2; margin-bottom: 8px;">{result['close']:.2f}</div><div style="font-size: 12px; color: #666; margin-bottom: 8px;">{rs_status_text}</div><div style="display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 6px;">{rs_perc_badge}{momentum_5d_badge}</div><div style="display: flex; flex-wrap: wrap; gap: 2px; margin-bottom: 6px; padding: 4px; background: #F5F5F5; border-radius: 6px;">{rs_1w_badge}{rs_2w_badge}{rs_1m_badge}{rs_2m_badge}{rs_3m_badge}<div style="margin-left: 4px;">{rs_trend_badge}</div></div><div style="display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 8px;">{rs_rsi_badge}{crossover_badge}</div><div style="display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 10px;">{obv_badge}{daily_rsi_badge}</div><div style="margin-top: auto;"><div style="font-size: 11px; color: #666; line-height: 1.4; border-top: 1px solid #e0e0e0; padding-top: 8px;">{description_escaped}</div></div></div>'''
                 
                 st.markdown(card_html, unsafe_allow_html=True)
                 
@@ -1477,14 +1497,16 @@ st.markdown("""
 <div class="material-card elevation-2" style="padding: 1.5rem; margin-bottom: 1rem;">
 <h3>🎯 Multi-Period Relative Strength Analysis</h3>
 
-**Core Concept - Triple Timeframe Momentum:**
-- **1M RS**: (Stock's 21-day ROC) / (VNINDEX's 21-day ROC) - **Short-term**
+**Core Concept - Five Timeframe Momentum:**
+- **1W RS**: (Stock's 5-day ROC) / (VNINDEX's 5-day ROC) - **Very Short-term**
+- **2W RS**: (Stock's 10-day ROC) / (VNINDEX's 10-day ROC) - **Short-term**
+- **1M RS**: (Stock's 21-day ROC) / (VNINDEX's 21-day ROC) - **Medium-Short**
 - **2M RS**: (Stock's 42-day ROC) / (VNINDEX's 42-day ROC) - **Medium-term**
 - **3M RS**: (Stock's 63-day ROC) / (VNINDEX's 63-day ROC) - **Longer-term**
 
 **Composite RS Formula:**
-- Weighted Average: (1M × 50%) + (2M × 30%) + (3M × 20%)
-- Emphasizes recent momentum while validating with longer trends
+- Weighted Average: (1W × 30%) + (2W × 25%) + (1M × 25%) + (2M × 15%) + (3M × 5%)
+- Progressive weighting emphasizes recent momentum while validating with longer trends
 
 **Interpretation:**
 - RS > 1.0: Stock's momentum is **outperforming** the market
@@ -1492,17 +1514,22 @@ st.markdown("""
 - RS = 1.0: Moving **in line** with the market
 
 **Trend Signals:**
-- **🚀 Accelerating**: 1M > 2M > 3M (Building momentum - Best setup)
-- **📈 Strengthening**: 1M > 3M (Recent strength)
+- **🚀 Accelerating**: 1W > 1M > 3M (Building momentum - Best setup)
+- **📈 Strengthening**: 1W > 3M (Recent strength emerging)
 - **↔️ Stable**: Consistent across periods
-- **📉 Weakening**: 1M < 3M (Losing momentum)
-- **⬇️ Decelerating**: 1M < 2M < 3M (Breaking down - Exit)
+- **📉 Weakening**: 1W < 3M (Losing momentum)
+- **⬇️ Decelerating**: 1W < 1M < 3M (Breaking down - Exit)
 
-**Why Multi-Period?**
-- **Confirms Momentum**: All periods aligned = high confidence
-- **Detects Changes**: Divergences show momentum shifts early
-- **Reduces Noise**: Filters false signals from single timeframe
-- **Better Ranking**: Compares tickers fairly across multiple horizons
+**Why 5-Period Analysis?**
+- **1W & 2W**: Catch immediate momentum shifts and entry timing
+- **1M**: Standard swing trading horizon
+- **2M & 3M**: Confirm sustainability and filter noise
+- **All Together**: High confidence when all periods align
+
+**Color Coding:**
+- **Green**: RS ≥ 1.02 (Outperforming)
+- **Yellow**: RS 0.98-1.02 (Neutral)
+- **Red**: RS < 0.98 (Underperforming)
 
 **RS Percentile Ranking:**
 - **Top 20% (RS ≥80%)**: List A - Strong Leaders, highest probability
