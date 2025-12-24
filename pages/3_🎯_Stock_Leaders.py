@@ -773,6 +773,49 @@ underperforming_filtered.sort(key=lambda x: x['score'], reverse=False)  # Lowest
 
 st.markdown("---")
 
+# Detect RS Daily crossovers above/below 1.0 (VNINDEX benchmark)
+rs_daily_crossovers = {
+    'just_above': [],      # Just crossed above 1.0
+    'near_above': [],      # Close to crossing above 1.0 (0.97-1.0)
+    'just_below': [],      # Just crossed below 1.0
+    'near_below': []       # Close to crossing below 1.0 (1.0-1.03)
+}
+
+for result in results:
+    rs_daily = result.get('rs_daily', np.nan)
+    if np.isnan(rs_daily):
+        continue
+    
+    # Try to get previous day's RS Daily from the data
+    ticker = result['ticker']
+    try:
+        # Load recent data to check previous value
+        df = load_price_data_for_ticker(ticker, analysis_datetime - timedelta(days=30), analysis_datetime)
+        if not df.empty and len(df) >= 2:
+            # Get RS Daily series
+            vnindex_recent = vnindex_data[vnindex_data.index.isin(df.index)]
+            if not vnindex_recent.empty:
+                rs_daily_series = calculate_relative_strength(df['close'], vnindex_recent['close'], 'momentum', 1)
+                if len(rs_daily_series) >= 2:
+                    rs_daily_prev = rs_daily_series.iloc[-2]
+                    rs_daily_current = rs_daily_series.iloc[-1]
+                    
+                    # Just crossed above 1.0 (bullish - outperforming)
+                    if rs_daily_prev <= 1.0 and rs_daily_current > 1.0:
+                        rs_daily_crossovers['just_above'].append(result)
+                    # Near crossing above (within 3% below 1.0)
+                    elif 0.97 <= rs_daily_current < 1.0:
+                        rs_daily_crossovers['near_above'].append(result)
+                    # Just crossed below 1.0 (bearish - underperforming)
+                    elif rs_daily_prev >= 1.0 and rs_daily_current < 1.0:
+                        rs_daily_crossovers['just_below'].append(result)
+                    # Near crossing below (within 3% above 1.0)
+                    elif 1.0 < rs_daily_current <= 1.03:
+                        rs_daily_crossovers['near_below'].append(result)
+    except Exception as e:
+        # Skip if data unavailable
+        continue
+
 # Summary Statistics
 st.markdown("## 📊 Market RS Distribution")
 
@@ -837,6 +880,133 @@ if summary_parts:
         </div>
     </div>
     """, unsafe_allow_html=True)
+
+# RS Daily Crossover vs VNINDEX (1.0 benchmark)
+st.markdown("### 🎯 RS Daily Crossover Alerts (vs VNINDEX)")
+st.caption("Stocks crossing above/below 1.0 indicate transition from underperforming to outperforming (or vice versa)")
+
+col_cross1, col_cross2, col_cross3, col_cross4 = st.columns(4)
+
+with col_cross1:
+    st.metric(
+        "🚀 Just Crossed Above 1.0", 
+        len(rs_daily_crossovers['just_above']),
+        help="Just started outperforming VNINDEX"
+    )
+    if rs_daily_crossovers['just_above']:
+        tickers = [r['ticker'] for r in rs_daily_crossovers['just_above']]
+        st.success(f"**{', '.join(tickers)}**")
+
+with col_cross2:
+    st.metric(
+        "📈 Near Crossing Above", 
+        len(rs_daily_crossovers['near_above']),
+        help="RS Daily 0.97-1.0, may soon outperform"
+    )
+    if rs_daily_crossovers['near_above']:
+        tickers = [r['ticker'] for r in rs_daily_crossovers['near_above']]
+        st.info(f"{', '.join(tickers)}")
+
+with col_cross3:
+    st.metric(
+        "⚠️ Just Crossed Below 1.0", 
+        len(rs_daily_crossovers['just_below']),
+        help="Just started underperforming VNINDEX"
+    )
+    if rs_daily_crossovers['just_below']:
+        tickers = [r['ticker'] for r in rs_daily_crossovers['just_below']]
+        st.error(f"**{', '.join(tickers)}**")
+
+with col_cross4:
+    st.metric(
+        "📉 Near Crossing Below", 
+        len(rs_daily_crossovers['near_below']),
+        help="RS Daily 1.0-1.03, may soon underperform"
+    )
+    if rs_daily_crossovers['near_below']:
+        tickers = [r['ticker'] for r in rs_daily_crossovers['near_below']]
+        st.warning(f"{', '.join(tickers)}")
+
+# Display detailed cards for just crossed stocks (most important signals)
+if rs_daily_crossovers['just_above'] or rs_daily_crossovers['just_below']:
+    with st.expander("📊 View Detailed Cards for Fresh Crossovers", expanded=True):
+        st.markdown("#### 🚀 Just Crossed Above 1.0 (New Outperformers)")
+        if rs_daily_crossovers['just_above']:
+            cols_per_row = 3
+            for idx, result in enumerate(rs_daily_crossovers['just_above'][:15], start=1):
+                if (idx - 1) % cols_per_row == 0:
+                    cols = st.columns(cols_per_row, gap="medium")
+                
+                col = cols[(idx - 1) % cols_per_row]
+                with col:
+                    ticker_escaped = html.escape(result['ticker'])
+                    rs_daily = result.get('rs_daily', np.nan)
+                    rs_perc = result.get('rs_percentile', 0)
+                    
+                    card_html = f'''
+                    <div style="border: 2px solid #4CAF50; border-radius: 12px; padding: 12px; 
+                                background: linear-gradient(135deg, #f5fff5 0%, #e8f5e9 100%); 
+                                box-shadow: 0 4px 12px rgba(76,175,80,0.3); margin-bottom: 16px;">
+                        <div style="font-size: 18px; font-weight: bold; color: #2E7D32; margin-bottom: 8px;">
+                            {ticker_escaped} 🚀
+                        </div>
+                        <div style="font-size: 24px; font-weight: bold; color: #4CAF50; margin-bottom: 8px;">
+                            {result['close']:.2f}
+                        </div>
+                        <div style="font-size: 12px; color: #666; margin-bottom: 4px;">
+                            RS Daily: <strong style="color: #4CAF50;">{rs_daily:.3f}</strong>
+                        </div>
+                        <div style="font-size: 12px; color: #666; margin-bottom: 4px;">
+                            RS Percentile: <strong>{rs_perc:.0f}%</strong>
+                        </div>
+                        <div style="margin-top: 8px; padding: 6px; background: #4CAF50; color: white; 
+                                    border-radius: 6px; text-align: center; font-weight: bold; font-size: 11px;">
+                            ✓ JUST CROSSED ABOVE VNINDEX
+                        </div>
+                    </div>
+                    '''
+                    st.markdown(card_html, unsafe_allow_html=True)
+        else:
+            st.caption("No stocks just crossed above 1.0")
+        
+        st.markdown("#### ⚠️ Just Crossed Below 1.0 (New Underperformers)")
+        if rs_daily_crossovers['just_below']:
+            cols_per_row = 3
+            for idx, result in enumerate(rs_daily_crossovers['just_below'][:15], start=1):
+                if (idx - 1) % cols_per_row == 0:
+                    cols = st.columns(cols_per_row, gap="medium")
+                
+                col = cols[(idx - 1) % cols_per_row]
+                with col:
+                    ticker_escaped = html.escape(result['ticker'])
+                    rs_daily = result.get('rs_daily', np.nan)
+                    rs_perc = result.get('rs_percentile', 0)
+                    
+                    card_html = f'''
+                    <div style="border: 2px solid #F44336; border-radius: 12px; padding: 12px; 
+                                background: linear-gradient(135deg, #fff5f5 0%, #ffebee 100%); 
+                                box-shadow: 0 4px 12px rgba(244,67,54,0.3); margin-bottom: 16px;">
+                        <div style="font-size: 18px; font-weight: bold; color: #C62828; margin-bottom: 8px;">
+                            {ticker_escaped} ⚠️
+                        </div>
+                        <div style="font-size: 24px; font-weight: bold; color: #F44336; margin-bottom: 8px;">
+                            {result['close']:.2f}
+                        </div>
+                        <div style="font-size: 12px; color: #666; margin-bottom: 4px;">
+                            RS Daily: <strong style="color: #F44336;">{rs_daily:.3f}</strong>
+                        </div>
+                        <div style="font-size: 12px; color: #666; margin-bottom: 4px;">
+                            RS Percentile: <strong>{rs_perc:.0f}%</strong>
+                        </div>
+                        <div style="margin-top: 8px; padding: 6px; background: #F44336; color: white; 
+                                    border-radius: 6px; text-align: center; font-weight: bold; font-size: 11px;">
+                            ✗ JUST CROSSED BELOW VNINDEX
+                        </div>
+                    </div>
+                    '''
+                    st.markdown(card_html, unsafe_allow_html=True)
+        else:
+            st.caption("No stocks just crossed below 1.0")
 
 st.markdown("---")
 
