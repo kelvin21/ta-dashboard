@@ -252,21 +252,34 @@ def format_pattern_card(pattern: dict):
     confidence_pct = pattern.get('confidence', 0.5) * 100
     quality_pct = pattern.get('quality_score', 0.5) * 100
     
-    # Use .format() instead of f-string to avoid curly brace conflicts
-    card_html = """
+    # Pre-format all values to avoid issues with .format()
+    current_fmt = f"{current:,.0f}"
+    target_1_3_fmt = f"{target_1_3:,.0f}"
+    potential_1_3_fmt = f"{potential_1_3:+.1f}"
+    target_1m_fmt = f"{target_1m:,.0f}"
+    potential_1m_fmt = f"{potential_1m:+.1f}"
+    target_full_fmt = f"{target_full:,.0f}"
+    potential_full_fmt = f"{potential_full:+.1f}"
+    stop_fmt = f"{stop:,.0f}"
+    risk_fmt = f"{risk:.1f}"
+    risk_reward_fmt = f"{pattern.get('risk_reward', 0):.2f}"
+    confidence_fmt = f"{confidence_pct:.0f}"
+    quality_fmt = f"{quality_pct:.0f}"
+    
+    card_html = f"""
     <div style="border-left: 4px solid {signal_color}; padding: 20px; margin: 15px 0; background: white; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.1);">
         <div style="display: flex; justify-content: space-between; align-items: start; margin-bottom: 15px;">
             <div>
                 <h3 style="margin: 0; color: #333;">
-                    {signal_icon} <strong>{ticker}</strong> - {pattern_name}
+                    {signal_icon} <strong>{pattern['ticker']}</strong> - {pattern['pattern']}
                 </h3>
                 <p style="margin: 5px 0 0 0; color: #666; font-size: 0.9em;">
-                    Formed over {formation_days} days
+                    Formed over {pattern.get('formation_days', 0)} days
                 </p>
             </div>
             <div style="text-align: right;">
                 <span style="background: {signal_color}; color: white; padding: 8px 16px; border-radius: 20px; font-weight: bold; font-size: 1.1em;">
-                    {signal}
+                    {pattern['signal']}
                 </span>
             </div>
         </div>
@@ -274,41 +287,41 @@ def format_pattern_card(pattern: dict):
         <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; margin: 20px 0;">
             <div style="background: #f5f5f5; padding: 12px; border-radius: 6px;">
                 <div style="color: #666; font-size: 0.85em; margin-bottom: 4px;">Current Price</div>
-                <div style="font-size: 1.3em; font-weight: bold; color: #333;">{current:,.0f} VND</div>
+                <div style="font-size: 1.3em; font-weight: bold; color: #333;">{current_fmt} VND</div>
             </div>
             
             <div style="background: #e8f5e9; padding: 12px; border-radius: 6px;">
                 <div style="color: #2e7d32; font-size: 0.85em; margin-bottom: 4px;">1-3 Days Target</div>
                 <div style="font-size: 1.3em; font-weight: bold; color: #1b5e20;">
-                    {target_1_3:,.0f} ({potential_1_3:+.1f}%)
+                    {target_1_3_fmt} ({potential_1_3_fmt}%)
                 </div>
             </div>
             
             <div style="background: #e3f2fd; padding: 12px; border-radius: 6px;">
                 <div style="color: #1565c0; font-size: 0.85em; margin-bottom: 4px;">1 Month Target</div>
                 <div style="font-size: 1.3em; font-weight: bold; color: #0d47a1;">
-                    {target_1m:,.0f} ({potential_1m:+.1f}%)
+                    {target_1m_fmt} ({potential_1m_fmt}%)
                 </div>
             </div>
             
             <div style="background: #fff3e0; padding: 12px; border-radius: 6px;">
                 <div style="color: #e65100; font-size: 0.85em; margin-bottom: 4px;">Full Target</div>
                 <div style="font-size: 1.3em; font-weight: bold; color: #bf360c;">
-                    {target_full:,.0f} ({potential_full:+.1f}%)
+                    {target_full_fmt} ({potential_full_fmt}%)
                 </div>
             </div>
             
             <div style="background: #ffebee; padding: 12px; border-radius: 6px;">
                 <div style="color: #c62828; font-size: 0.85em; margin-bottom: 4px;">Stop Loss</div>
                 <div style="font-size: 1.3em; font-weight: bold; color: #b71c1c;">
-                    {stop:,.0f} (-{risk:.1f}%)
+                    {stop_fmt} (-{risk_fmt}%)
                 </div>
             </div>
             
             <div style="background: #f3e5f5; padding: 12px; border-radius: 6px;">
                 <div style="color: #6a1b9a; font-size: 0.85em; margin-bottom: 4px;">Risk/Reward</div>
                 <div style="font-size: 1.3em; font-weight: bold; color: #4a148c;">
-                    1:{risk_reward:.2f}
+                    1:{risk_reward_fmt}
                 </div>
             </div>
         </div>
@@ -316,43 +329,24 @@ def format_pattern_card(pattern: dict):
         <div style="display: flex; gap: 20px; margin-top: 15px;">
             <div style="flex: 1;">
                 <div style="color: #666; font-size: 0.85em; margin-bottom: 8px;">
-                    Confidence: {confidence_pct:.0f}%
+                    Confidence: {confidence_fmt}%
                 </div>
                 <div style="background: #e0e0e0; height: 8px; border-radius: 4px; overflow: hidden;">
-                    <div style="background: linear-gradient(90deg, #ff9800, #4caf50); height: 100%; width: {confidence_pct:.0f}%; transition: width 0.3s;"></div>
+                    <div style="background: linear-gradient(90deg, #ff9800, #4caf50); height: 100%; width: {confidence_fmt}%; transition: width 0.3s;"></div>
                 </div>
             </div>
             
             <div style="flex: 1;">
                 <div style="color: #666; font-size: 0.85em; margin-bottom: 8px;">
-                    Quality Score: {quality_pct:.0f}%
+                    Quality Score: {quality_fmt}%
                 </div>
                 <div style="background: #e0e0e0; height: 8px; border-radius: 4px; overflow: hidden;">
-                    <div style="background: linear-gradient(90deg, #2196f3, #9c27b0); height: 100%; width: {quality_pct:.0f}%; transition: width 0.3s;"></div>
+                    <div style="background: linear-gradient(90deg, #2196f3, #9c27b0); height: 100%; width: {quality_fmt}%; transition: width 0.3s;"></div>
                 </div>
             </div>
         </div>
     </div>
-    """.format(
-        signal_color=signal_color,
-        signal_icon=signal_icon,
-        ticker=pattern['ticker'],
-        pattern_name=pattern['pattern'],
-        formation_days=pattern.get('formation_days', 0),
-        signal=pattern['signal'],
-        current=current,
-        target_1_3=target_1_3,
-        potential_1_3=potential_1_3,
-        target_1m=target_1m,
-        potential_1m=potential_1m,
-        target_full=target_full,
-        potential_full=potential_full,
-        stop=stop,
-        risk=risk,
-        risk_reward=pattern.get('risk_reward', 0),
-        confidence_pct=confidence_pct,
-        quality_pct=quality_pct
-    )
+    """
     
     return card_html
 
