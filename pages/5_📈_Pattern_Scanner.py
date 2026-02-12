@@ -252,33 +252,22 @@ def format_pattern_card(pattern: dict):
     confidence_pct = pattern.get('confidence', 0.5) * 100
     quality_pct = pattern.get('quality_score', 0.5) * 100
     
-    card_html = f"""
-    <div class="pattern-card" style="
-        border-left: 4px solid {signal_color};
-        padding: 20px;
-        margin: 15px 0;
-        background: white;
-        border-radius: 8px;
-        box-shadow: 0 2px 8px rgba(0,0,0,0.1);
-    ">
+    # Use .format() instead of f-string to avoid curly brace conflicts
+    card_html = """
+    <div style="border-left: 4px solid {signal_color}; padding: 20px; margin: 15px 0; background: white; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.1);">
         <div style="display: flex; justify-content: space-between; align-items: start; margin-bottom: 15px;">
             <div>
                 <h3 style="margin: 0; color: #333;">
-                    {signal_icon} <strong>{pattern['ticker']}</strong> - {pattern['pattern']}
+                    {signal_icon} <strong>{ticker}</strong> - {pattern_name}
                 </h3>
                 <p style="margin: 5px 0 0 0; color: #666; font-size: 0.9em;">
-                    Formed over {pattern.get('formation_days', 0)} days
+                    Formed over {formation_days} days
                 </p>
             </div>
             <div style="text-align: right;">
-                <span style="
-                    background: {signal_color};
-                    color: white;
-                    padding: 8px 16px;
-                    border-radius: 20px;
-                    font-weight: bold;
-                    font-size: 1.1em;
-                ">{pattern['signal']}</span>
+                <span style="background: {signal_color}; color: white; padding: 8px 16px; border-radius: 20px; font-weight: bold; font-size: 1.1em;">
+                    {signal}
+                </span>
             </div>
         </div>
         
@@ -319,7 +308,7 @@ def format_pattern_card(pattern: dict):
             <div style="background: #f3e5f5; padding: 12px; border-radius: 6px;">
                 <div style="color: #6a1b9a; font-size: 0.85em; margin-bottom: 4px;">Risk/Reward</div>
                 <div style="font-size: 1.3em; font-weight: bold; color: #4a148c;">
-                    1:{pattern.get('risk_reward', 0):.2f}
+                    1:{risk_reward:.2f}
                 </div>
             </div>
         </div>
@@ -330,12 +319,7 @@ def format_pattern_card(pattern: dict):
                     Confidence: {confidence_pct:.0f}%
                 </div>
                 <div style="background: #e0e0e0; height: 8px; border-radius: 4px; overflow: hidden;">
-                    <div style="
-                        background: linear-gradient(90deg, #ff9800, #4caf50);
-                        height: 100%;
-                        width: {confidence_pct}%;
-                        transition: width 0.3s;
-                    "></div>
+                    <div style="background: linear-gradient(90deg, #ff9800, #4caf50); height: 100%; width: {confidence_pct:.0f}%; transition: width 0.3s;"></div>
                 </div>
             </div>
             
@@ -344,17 +328,31 @@ def format_pattern_card(pattern: dict):
                     Quality Score: {quality_pct:.0f}%
                 </div>
                 <div style="background: #e0e0e0; height: 8px; border-radius: 4px; overflow: hidden;">
-                    <div style="
-                        background: linear-gradient(90deg, #2196f3, #9c27b0);
-                        height: 100%;
-                        width: {quality_pct}%;
-                        transition: width 0.3s;
-                    "></div>
+                    <div style="background: linear-gradient(90deg, #2196f3, #9c27b0); height: 100%; width: {quality_pct:.0f}%; transition: width 0.3s;"></div>
                 </div>
             </div>
         </div>
     </div>
-    """
+    """.format(
+        signal_color=signal_color,
+        signal_icon=signal_icon,
+        ticker=pattern['ticker'],
+        pattern_name=pattern['pattern'],
+        formation_days=pattern.get('formation_days', 0),
+        signal=pattern['signal'],
+        current=current,
+        target_1_3=target_1_3,
+        potential_1_3=potential_1_3,
+        target_1m=target_1m,
+        potential_1m=potential_1m,
+        target_full=target_full,
+        potential_full=potential_full,
+        stop=stop,
+        risk=risk,
+        risk_reward=pattern.get('risk_reward', 0),
+        confidence_pct=confidence_pct,
+        quality_pct=quality_pct
+    )
     
     return card_html
 
