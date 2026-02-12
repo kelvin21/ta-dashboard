@@ -8,3 +8,4 @@ pymongo>=4.6.0
 dnspython>=2.4.0
 pandas-ta>=0.3.14b
 nest-asyncio>=1.5.8
+scipy>=1.11.0

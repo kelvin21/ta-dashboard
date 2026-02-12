@@ -1,0 +1,658 @@
+"""
+Pattern Scanner Page
+Identifies classical trading patterns that can form over 6-18 months.
+Provides buy/sell signals with target prices and stop loss levels.
+"""
+import os
+import sys
+from pathlib import Path
+import streamlit as st
+import pandas as pd
+import numpy as np
+from datetime import datetime, timedelta
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
+import asyncio
+from concurrent.futures import ThreadPoolExecutor
+import time
+
+# Add parent directory to path
+SCRIPT_DIR = Path(__file__).parent.parent
+if str(SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_DIR))
+
+# Load Material Design CSS
+css_path = SCRIPT_DIR / "styles" / "material.css"
+if css_path.exists():
+    with open(css_path) as f:
+        st.markdown(f"<style>{f.read()}</style>", unsafe_allow_html=True)
+
+# Load environment
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
+
+# Import utilities
+try:
+    from utils.pattern_detection import PatternDetector, rank_patterns_by_quality
+    from utils.db_async import get_sync_db_adapter
+    from utils.indicators import calculate_all_indicators
+    USE_UTILS = True
+except ImportError as e:
+    st.error(f"Failed to import utility modules: {e}")
+    st.info("Please ensure utils/ directory exists with pattern_detection.py and db_async.py")
+    st.stop()
+
+# Page config
+st.set_page_config(
+    page_title="Pattern Scanner",
+    layout="wide",
+    page_icon="📈"
+)
+
+# Title
+st.markdown("# 📈 Trading Pattern Scanner")
+st.markdown("Identify classical chart patterns with buy/sell signals and price targets")
+
+# Initialize session state
+if 'patterns_analyzed' not in st.session_state:
+    st.session_state.patterns_analyzed = False
+if 'all_patterns' not in st.session_state:
+    st.session_state.all_patterns = []
+if 'analysis_progress' not in st.session_state:
+    st.session_state.analysis_progress = 0
+if 'is_analyzing' not in st.session_state:
+    st.session_state.is_analyzing = False
+
+# =====================================================================
+# HELPER FUNCTIONS
+# =====================================================================
+
+@st.cache_resource(ttl=3600)
+def get_db():
+    """Get database adapter (cached)."""
+    return get_sync_db_adapter()
+
+@st.cache_data(ttl=1800)
+def get_all_tickers_cached():
+    """Get all tickers from database (cached)."""
+    try:
+        db = get_db()
+        tickers = db.get_all_tickers()
+        return tickers if tickers else []
+    except Exception as e:
+        st.error(f"Error fetching tickers: {e}")
+        return []
+
+def analyze_ticker_patterns(ticker: str, lookback_months: int = 18) -> list:
+    """
+    Analyze patterns for a single ticker.
+    
+    Args:
+        ticker: Ticker symbol
+        lookback_months: Number of months to look back
+    
+    Returns:
+        List of detected patterns
+    """
+    try:
+        db = get_db()
+        end_date = datetime.now()
+        start_date = end_date - timedelta(days=lookback_months * 30)
+        
+        # Get price data
+        df = db.get_price_data(ticker, start_date, end_date)
+        
+        if df.empty or len(df) < 30:
+            return []
+        
+        # Initialize pattern detector
+        detector = PatternDetector(min_pattern_days=30, max_pattern_days=lookback_months * 30)
+        
+        # Detect all patterns
+        patterns = detector.detect_all_patterns(df, ticker)
+        
+        # Add timeframe targets
+        for pattern in patterns:
+            targets = detector.calculate_timeframe_targets(pattern, df)
+            pattern.update(targets)
+        
+        return patterns
+    
+    except Exception as e:
+        print(f"Error analyzing {ticker}: {e}")
+        return []
+
+def analyze_all_tickers(tickers: list, lookback_months: int = 18, progress_callback=None):
+    """
+    Analyze patterns for all tickers using parallel processing.
+    
+    Args:
+        tickers: List of ticker symbols
+        lookback_months: Number of months to look back
+        progress_callback: Function to call with progress updates
+    
+    Returns:
+        List of all detected patterns
+    """
+    all_patterns = []
+    total = len(tickers)
+    
+    with ThreadPoolExecutor(max_workers=10) as executor:
+        futures = {executor.submit(analyze_ticker_patterns, ticker, lookback_months): ticker 
+                   for ticker in tickers}
+        
+        for i, future in enumerate(futures):
+            try:
+                patterns = future.result(timeout=30)
+                all_patterns.extend(patterns)
+                
+                if progress_callback:
+                    progress_callback(i + 1, total)
+            except Exception as e:
+                print(f"Error processing ticker: {e}")
+    
+    # Rank by quality
+    ranked_patterns = rank_patterns_by_quality(all_patterns)
+    
+    return ranked_patterns
+
+def create_pattern_chart(ticker: str, pattern: dict, lookback_days: int = None):
+    """Create interactive chart showing the pattern."""
+    try:
+        db = get_db()
+        
+        # Use pattern formation days or default lookback
+        if lookback_days is None:
+            lookback_days = max(pattern.get('formation_days', 180) + 30, 180)
+        
+        end_date = datetime.now()
+        start_date = end_date - timedelta(days=lookback_days)
+        
+        df = db.get_price_data(ticker, start_date, end_date)
+        
+        if df.empty:
+            return None
+        
+        # Create candlestick chart
+        fig = go.Figure()
+        
+        fig.add_trace(go.Candlestick(
+            x=df['date'],
+            open=df['open'],
+            high=df['high'],
+            low=df['low'],
+            close=df['close'],
+            name='Price',
+            increasing_line_color='#26a69a',
+            decreasing_line_color='#ef5350'
+        ))
+        
+        # Add pattern markers
+        current_price = pattern['current_price']
+        target_price = pattern['target_price']
+        stop_loss = pattern['stop_loss']
+        
+        # Current price line
+        fig.add_hline(y=current_price, line_dash="solid", line_color="blue", 
+                      annotation_text=f"Current: {current_price:,.0f}",
+                      annotation_position="right")
+        
+        # Target price line
+        fig.add_hline(y=target_price, line_dash="dash", line_color="green" if pattern['signal'] == 'BUY' else "red",
+                      annotation_text=f"Target: {target_price:,.0f}",
+                      annotation_position="right")
+        
+        # Stop loss line
+        fig.add_hline(y=stop_loss, line_dash="dot", line_color="red" if pattern['signal'] == 'BUY' else "green",
+                      annotation_text=f"Stop: {stop_loss:,.0f}",
+                      annotation_position="right")
+        
+        # Neckline if available
+        if pattern.get('neckline'):
+            fig.add_hline(y=pattern['neckline'], line_dash="dash", line_color="orange",
+                         annotation_text="Neckline",
+                         annotation_position="left")
+        
+        fig.update_layout(
+            title=f"{ticker} - {pattern['pattern']}",
+            yaxis_title="Price",
+            xaxis_title="Date",
+            template="plotly_white",
+            height=400,
+            showlegend=False,
+            xaxis_rangeslider_visible=False
+        )
+        
+        return fig
+    
+    except Exception as e:
+        st.error(f"Error creating chart: {e}")
+        return None
+
+def format_pattern_card(pattern: dict):
+    """Format a pattern as a styled card."""
+    signal_color = "#4CAF50" if pattern['signal'] == 'BUY' else "#f44336"
+    signal_icon = "📈" if pattern['signal'] == 'BUY' else "📉"
+    
+    current = pattern['current_price']
+    target_1_3 = pattern.get('target_1_3_days', 0)
+    target_1m = pattern.get('target_1_month', 0)
+    target_full = pattern.get('target_full', pattern['target_price'])
+    stop = pattern['stop_loss']
+    
+    potential_1_3 = ((target_1_3 - current) / current * 100) if target_1_3 else 0
+    potential_1m = ((target_1m - current) / current * 100) if target_1m else 0
+    potential_full = ((target_full - current) / current * 100)
+    
+    risk = abs((current - stop) / current * 100)
+    
+    confidence_pct = pattern.get('confidence', 0.5) * 100
+    quality_pct = pattern.get('quality_score', 0.5) * 100
+    
+    card_html = f"""
+    <div class="pattern-card" style="
+        border-left: 4px solid {signal_color};
+        padding: 20px;
+        margin: 15px 0;
+        background: white;
+        border-radius: 8px;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+    ">
+        <div style="display: flex; justify-content: space-between; align-items: start; margin-bottom: 15px;">
+            <div>
+                <h3 style="margin: 0; color: #333;">
+                    {signal_icon} <strong>{pattern['ticker']}</strong> - {pattern['pattern']}
+                </h3>
+                <p style="margin: 5px 0 0 0; color: #666; font-size: 0.9em;">
+                    Formed over {pattern.get('formation_days', 0)} days
+                </p>
+            </div>
+            <div style="text-align: right;">
+                <span style="
+                    background: {signal_color};
+                    color: white;
+                    padding: 8px 16px;
+                    border-radius: 20px;
+                    font-weight: bold;
+                    font-size: 1.1em;
+                ">{pattern['signal']}</span>
+            </div>
+        </div>
+        
+        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; margin: 20px 0;">
+            <div style="background: #f5f5f5; padding: 12px; border-radius: 6px;">
+                <div style="color: #666; font-size: 0.85em; margin-bottom: 4px;">Current Price</div>
+                <div style="font-size: 1.3em; font-weight: bold; color: #333;">{current:,.0f} VND</div>
+            </div>
+            
+            <div style="background: #e8f5e9; padding: 12px; border-radius: 6px;">
+                <div style="color: #2e7d32; font-size: 0.85em; margin-bottom: 4px;">1-3 Days Target</div>
+                <div style="font-size: 1.3em; font-weight: bold; color: #1b5e20;">
+                    {target_1_3:,.0f} ({potential_1_3:+.1f}%)
+                </div>
+            </div>
+            
+            <div style="background: #e3f2fd; padding: 12px; border-radius: 6px;">
+                <div style="color: #1565c0; font-size: 0.85em; margin-bottom: 4px;">1 Month Target</div>
+                <div style="font-size: 1.3em; font-weight: bold; color: #0d47a1;">
+                    {target_1m:,.0f} ({potential_1m:+.1f}%)
+                </div>
+            </div>
+            
+            <div style="background: #fff3e0; padding: 12px; border-radius: 6px;">
+                <div style="color: #e65100; font-size: 0.85em; margin-bottom: 4px;">Full Target</div>
+                <div style="font-size: 1.3em; font-weight: bold; color: #bf360c;">
+                    {target_full:,.0f} ({potential_full:+.1f}%)
+                </div>
+            </div>
+            
+            <div style="background: #ffebee; padding: 12px; border-radius: 6px;">
+                <div style="color: #c62828; font-size: 0.85em; margin-bottom: 4px;">Stop Loss</div>
+                <div style="font-size: 1.3em; font-weight: bold; color: #b71c1c;">
+                    {stop:,.0f} (-{risk:.1f}%)
+                </div>
+            </div>
+            
+            <div style="background: #f3e5f5; padding: 12px; border-radius: 6px;">
+                <div style="color: #6a1b9a; font-size: 0.85em; margin-bottom: 4px;">Risk/Reward</div>
+                <div style="font-size: 1.3em; font-weight: bold; color: #4a148c;">
+                    1:{pattern.get('risk_reward', 0):.2f}
+                </div>
+            </div>
+        </div>
+        
+        <div style="display: flex; gap: 20px; margin-top: 15px;">
+            <div style="flex: 1;">
+                <div style="color: #666; font-size: 0.85em; margin-bottom: 8px;">
+                    Confidence: {confidence_pct:.0f}%
+                </div>
+                <div style="background: #e0e0e0; height: 8px; border-radius: 4px; overflow: hidden;">
+                    <div style="
+                        background: linear-gradient(90deg, #ff9800, #4caf50);
+                        height: 100%;
+                        width: {confidence_pct}%;
+                        transition: width 0.3s;
+                    "></div>
+                </div>
+            </div>
+            
+            <div style="flex: 1;">
+                <div style="color: #666; font-size: 0.85em; margin-bottom: 8px;">
+                    Quality Score: {quality_pct:.0f}%
+                </div>
+                <div style="background: #e0e0e0; height: 8px; border-radius: 4px; overflow: hidden;">
+                    <div style="
+                        background: linear-gradient(90deg, #2196f3, #9c27b0);
+                        height: 100%;
+                        width: {quality_pct}%;
+                        transition: width 0.3s;
+                    "></div>
+                </div>
+            </div>
+        </div>
+    </div>
+    """
+    
+    return card_html
+
+# =====================================================================
+# MAIN UI
+# =====================================================================
+
+# Info section
+with st.expander("ℹ️ About Pattern Scanner", expanded=False):
+    st.markdown("""
+    ### What are Chart Patterns?
+    Chart patterns are formations created by the price movements of stocks over time. These patterns can take 
+    **6-18 months** to fully develop and provide insights into potential future price movements.
+    
+    ### Patterns Detected:
+    
+    **Reversal Patterns (Trend Change):**
+    - 📊 **Head and Shoulders**: Strong reversal pattern after uptrend
+    - 📊 **Inverse Head and Shoulders**: Bullish reversal after downtrend
+    - 📊 **Double/Triple Top/Bottom**: Multiple tests of support/resistance
+    - 📊 **Rising/Falling Wedge**: Price converging with directional bias
+    
+    **Continuation Patterns (Trend Continues):**
+    - 📈 **Bull/Bear Flags**: Brief consolidation before trend continues
+    - 📈 **Triangles**: Ascending, descending, or symmetrical consolidation
+    - 📈 **Cup and Handle**: U-shaped recovery with small pullback
+    
+    ### How to Use:
+    1. Click **"Scan All Patterns"** to analyze entire database (takes 2-5 minutes)
+    2. Filter by signal type, pattern, or timeframe
+    3. Review recommendations with target prices and stop loss
+    4. View charts to confirm pattern visually
+    
+    ### Target Timeframes:
+    - **1-3 Days**: Conservative short-term target
+    - **1 Month**: Medium-term target (~50% of full pattern move)
+    - **Full Target**: Complete pattern target (may take several months)
+    
+    ### Risk Management:
+    Always use stop loss levels provided. Risk/Reward ratio shows potential gain vs. potential loss.
+    """)
+
+# Control panel
+col1, col2, col3 = st.columns([2, 2, 2])
+
+with col1:
+    lookback_months = st.slider(
+        "Analysis Period (Months)",
+        min_value=3,
+        max_value=24,
+        value=18,
+        help="How far back to look for pattern formation"
+    )
+
+with col2:
+    min_quality = st.slider(
+        "Minimum Quality Score",
+        min_value=0.0,
+        max_value=1.0,
+        value=0.5,
+        step=0.1,
+        help="Filter patterns by quality score"
+    )
+
+with col3:
+    min_risk_reward = st.slider(
+        "Min Risk/Reward Ratio",
+        min_value=1.0,
+        max_value=5.0,
+        value=1.5,
+        step=0.5,
+        help="Minimum acceptable risk/reward ratio"
+    )
+
+# Scan button
+st.markdown("---")
+col_btn1, col_btn2, col_btn3 = st.columns([1, 2, 1])
+
+with col_btn2:
+    if st.button("🔍 Scan All Patterns", type="primary", use_container_width=True, disabled=st.session_state.is_analyzing):
+        st.session_state.is_analyzing = True
+        st.session_state.all_patterns = []
+        st.session_state.analysis_progress = 0
+        
+        # Get all tickers
+        all_tickers = get_all_tickers_cached()
+        
+        if not all_tickers:
+            st.error("No tickers found in database!")
+            st.session_state.is_analyzing = False
+        else:
+            # Progress tracking
+            progress_bar = st.progress(0)
+            status_text = st.empty()
+            
+            def update_progress(current, total):
+                progress = current / total
+                st.session_state.analysis_progress = progress
+                progress_bar.progress(progress)
+                status_text.text(f"Analyzing patterns... {current}/{total} tickers ({progress*100:.1f}%)")
+            
+            status_text.text(f"Starting analysis of {len(all_tickers)} tickers...")
+            
+            # Run analysis
+            start_time = time.time()
+            patterns = analyze_all_tickers(all_tickers, lookback_months, update_progress)
+            elapsed = time.time() - start_time
+            
+            st.session_state.all_patterns = patterns
+            st.session_state.patterns_analyzed = True
+            st.session_state.is_analyzing = False
+            
+            progress_bar.empty()
+            status_text.success(f"✅ Analysis complete! Found {len(patterns)} patterns in {elapsed:.1f} seconds")
+            time.sleep(2)
+            status_text.empty()
+            st.rerun()
+
+# Display results
+if st.session_state.patterns_analyzed and st.session_state.all_patterns:
+    st.markdown("---")
+    st.markdown("## 📊 Detected Patterns")
+    
+    patterns = st.session_state.all_patterns
+    
+    # Apply filters
+    filtered_patterns = [
+        p for p in patterns
+        if p.get('quality_score', 0) >= min_quality
+        and p.get('risk_reward', 0) >= min_risk_reward
+    ]
+    
+    # Filter controls
+    col_f1, col_f2, col_f3, col_f4 = st.columns(4)
+    
+    with col_f1:
+        signal_filter = st.multiselect(
+            "Signal Type",
+            options=['BUY', 'SELL'],
+            default=['BUY', 'SELL']
+        )
+    
+    with col_f2:
+        pattern_types = list(set([p['pattern'] for p in filtered_patterns]))
+        pattern_filter = st.multiselect(
+            "Pattern Type",
+            options=sorted(pattern_types),
+            default=sorted(pattern_types)
+        )
+    
+    with col_f3:
+        timeframe_filter = st.selectbox(
+            "Focus Timeframe",
+            options=['All', '1-3 Days', '1 Month', 'Full Target']
+        )
+    
+    with col_f4:
+        sort_by = st.selectbox(
+            "Sort By",
+            options=['Quality Score', 'Risk/Reward', 'Potential Gain', 'Confidence']
+        )
+    
+    # Apply additional filters
+    if signal_filter:
+        filtered_patterns = [p for p in filtered_patterns if p['signal'] in signal_filter]
+    if pattern_filter:
+        filtered_patterns = [p for p in filtered_patterns if p['pattern'] in pattern_filter]
+    
+    # Sort
+    if sort_by == 'Quality Score':
+        filtered_patterns.sort(key=lambda x: x.get('quality_score', 0), reverse=True)
+    elif sort_by == 'Risk/Reward':
+        filtered_patterns.sort(key=lambda x: x.get('risk_reward', 0), reverse=True)
+    elif sort_by == 'Potential Gain':
+        filtered_patterns.sort(key=lambda x: abs((x['target_price'] - x['current_price']) / x['current_price']), reverse=True)
+    elif sort_by == 'Confidence':
+        filtered_patterns.sort(key=lambda x: x.get('confidence', 0), reverse=True)
+    
+    # Summary metrics
+    st.markdown("### 📈 Summary Statistics")
+    col_s1, col_s2, col_s3, col_s4, col_s5 = st.columns(5)
+    
+    buy_patterns = [p for p in filtered_patterns if p['signal'] == 'BUY']
+    sell_patterns = [p for p in filtered_patterns if p['signal'] == 'SELL']
+    avg_quality = np.mean([p.get('quality_score', 0) for p in filtered_patterns]) if filtered_patterns else 0
+    avg_rr = np.mean([p.get('risk_reward', 0) for p in filtered_patterns]) if filtered_patterns else 0
+    
+    col_s1.metric("Total Patterns", len(filtered_patterns))
+    col_s2.metric("Buy Signals", len(buy_patterns), delta="Bullish", delta_color="normal")
+    col_s3.metric("Sell Signals", len(sell_patterns), delta="Bearish", delta_color="inverse")
+    col_s4.metric("Avg Quality", f"{avg_quality:.2f}")
+    col_s5.metric("Avg R/R", f"1:{avg_rr:.2f}")
+    
+    st.markdown("---")
+    
+    # Display patterns
+    if not filtered_patterns:
+        st.info("No patterns match the current filters. Try adjusting the criteria.")
+    else:
+        # Tabs for BUY and SELL
+        tab_buy, tab_sell, tab_all = st.tabs([
+            f"🟢 BUY Signals ({len(buy_patterns)})",
+            f"🔴 SELL Signals ({len(sell_patterns)})",
+            f"📊 All Patterns ({len(filtered_patterns)})"
+        ])
+        
+        with tab_buy:
+            if buy_patterns:
+                st.markdown(f"### Top Buy Opportunities")
+                for i, pattern in enumerate(buy_patterns[:20]):  # Limit to top 20
+                    st.markdown(format_pattern_card(pattern), unsafe_allow_html=True)
+                    
+                    with st.expander(f"View Chart - {pattern['ticker']}"):
+                        chart = create_pattern_chart(pattern['ticker'], pattern)
+                        if chart:
+                            st.plotly_chart(chart, use_container_width=True)
+            else:
+                st.info("No buy signals found with current filters.")
+        
+        with tab_sell:
+            if sell_patterns:
+                st.markdown(f"### Top Sell Opportunities")
+                for i, pattern in enumerate(sell_patterns[:20]):  # Limit to top 20
+                    st.markdown(format_pattern_card(pattern), unsafe_allow_html=True)
+                    
+                    with st.expander(f"View Chart - {pattern['ticker']}"):
+                        chart = create_pattern_chart(pattern['ticker'], pattern)
+                        if chart:
+                            st.plotly_chart(chart, use_container_width=True)
+            else:
+                st.info("No sell signals found with current filters.")
+        
+        with tab_all:
+            st.markdown(f"### All Detected Patterns")
+            for i, pattern in enumerate(filtered_patterns[:30]):  # Limit to top 30
+                st.markdown(format_pattern_card(pattern), unsafe_allow_html=True)
+                
+                with st.expander(f"View Chart - {pattern['ticker']}"):
+                    chart = create_pattern_chart(pattern['ticker'], pattern)
+                    if chart:
+                        st.plotly_chart(chart, use_container_width=True)
+
+elif st.session_state.is_analyzing:
+    st.info("Analysis in progress... Please wait.")
+else:
+    st.info("👆 Click 'Scan All Patterns' to begin analysis of historical data")
+    
+    # Show example pattern explanation
+    st.markdown("---")
+    st.markdown("### 📚 Pattern Examples")
+    
+    col_e1, col_e2 = st.columns(2)
+    
+    with col_e1:
+        st.markdown("""
+        #### 🟢 Bullish Patterns (Buy Signals)
+        
+        **Inverse Head and Shoulders**
+        - Three troughs: left shoulder, head (lowest), right shoulder
+        - Breaks above neckline = BUY signal
+        - Target: Neckline + pattern height
+        
+        **Cup and Handle**
+        - U-shaped cup formation over months
+        - Small handle pullback near rim
+        - Breaks above rim = BUY signal
+        
+        **Ascending Triangle**
+        - Flat resistance, rising support
+        - Compression leads to upward breakout
+        - Target: Triangle height added to breakout
+        """)
+    
+    with col_e2:
+        st.markdown("""
+        #### 🔴 Bearish Patterns (Sell Signals)
+        
+        **Head and Shoulders Top**
+        - Three peaks: left shoulder, head (highest), right shoulder
+        - Breaks below neckline = SELL signal
+        - Target: Neckline - pattern height
+        
+        **Double Top**
+        - Two peaks at similar levels
+        - Breaks below valley = SELL signal
+        - Target: Pattern height subtracted
+        
+        **Descending Triangle**
+        - Flat support, declining resistance
+        - Compression leads to downward break
+        - Target: Triangle height subtracted
+        """)
+
+# Footer
+st.markdown("---")
+st.markdown("""
+<div style="text-align: center; color: #666; font-size: 0.9em;">
+    <p>⚠️ <strong>Disclaimer:</strong> Pattern analysis is not financial advice. Always do your own research and use proper risk management.</p>
+    <p>Patterns can fail. Use stop losses and never risk more than you can afford to lose.</p>
+</div>
+""", unsafe_allow_html=True)

@@ -21,6 +21,19 @@ A comprehensive technical analysis dashboard for Vietnamese stock market (HOSE/H
   - Moving average analysis (MA50, MA200)
   - Market sentiment tracking
 
+- **EMA Signals Analysis** *(page)*
+  - Multi-EMA alignment tracking (9, 12, 21, 50, 100, 200)
+  - EMA zone detection and strength scoring
+  - Buy/Sell signal generation
+
+- **Trading Pattern Scanner** *(NEW page)*
+  - Classical chart pattern detection (6-18 month formations)
+  - 12+ pattern types (Head & Shoulders, Double Top/Bottom, Triangles, Flags, Wedges, Cup & Handle)
+  - Buy/Sell signals with target prices and stop loss
+  - Multiple timeframe projections (1-3 days, 1 month, full target)
+  - Risk/Reward analysis and quality scoring
+  - Parallel processing for fast scanning
+
 - **Market Forecast** *(optional page)*
   - Predictive models based on breadth data
   - Trend forecasting
@@ -35,6 +48,7 @@ streamlit >= 1.28.0
 pandas >= 2.0.0
 numpy >= 1.24.0
 plotly >= 5.17.0
+scipy >= 1.11.0  # For pattern detection
 ```
 
 ### Installation
@@ -72,8 +86,17 @@ streamlit run ta_dashboard.py
 macd-reversal/
 ├── ta_dashboard.py              # Main dashboard (MACD Overview)
 ├── pages/
-│   ├── 1_📊_Market_Breadth.py
-│   └── 2_🎯_Market_Forecast.py
+│   ├── 1_📊_Market_Breadth.py   # Market breadth indicators
+│   ├── 2_📈_EMA_Signals.py      # EMA analysis and signals
+│   ├── 3_🎯_Stock_Leaders.py    # Stock leadership analysis
+│   ├── 4_Market_Forecast.py     # Market predictions
+│   └── 5_📈_Pattern_Scanner.py  # Chart pattern detection (NEW)
+├── utils/
+│   ├── pattern_detection.py     # Pattern detection algorithms (NEW)
+│   ├── indicators.py            # Technical indicators
+│   ├── ema_utils.py             # EMA utilities
+│   ├── macd_utils.py            # MACD utilities
+│   └── db_async.py              # Database async operations
 ├── build_price_db.py            # TCBS data fetcher
 ├── ticker_manager.py            # Ticker management
 ├── intraday_updater.py          # Intraday OHLCV updates
@@ -82,11 +105,13 @@ macd-reversal/
 ├── init_database.py             # Initialize empty database
 ├── export_database.py           # Export/import database to CSV
 ├── mongodb_migration.py         # Migrate SQLite to MongoDB
+├── test_pattern_scanner.py      # Pattern scanner test suite (NEW)
 ├── .streamlit/
 │   └── config.toml              # Streamlit configuration
 ├── requirements.txt
 ├── .env.example
 ├── .gitignore
+├── PATTERN_SCANNER_README.md    # Pattern scanner documentation (NEW)
 └── README.md
 ```
 
@@ -142,6 +167,24 @@ python mongodb_migration.py
 - **Manual refresh**: Use sidebar button for subsequent updates
 - **Single ticker**: Update individual ticker
 - **Bulk update**: Refresh all tickers at once
+
+### Pattern Scanner
+
+1. **Navigate**: Go to "📈 Pattern Scanner" page
+2. **Configure**: Set analysis period (3-24 months), quality filters, risk/reward minimums
+3. **Scan**: Click "🔍 Scan All Patterns" to analyze entire database (2-5 minutes)
+4. **Review**: Browse BUY/SELL signals with target prices and stop loss levels
+5. **Filter**: Sort by quality score, risk/reward ratio, or potential gain
+6. **Charts**: View pattern formations on interactive candlestick charts
+7. **Timeframes**: Check 1-3 day, 1 month, and full pattern targets
+8. **Risk Management**: Always use provided stop loss levels
+
+**Pattern Types Detected:**
+- Reversal: Head & Shoulders, Double/Triple Top/Bottom, Wedges
+- Continuation: Flags, Triangles, Cup & Handle
+- Formation Period: 6-18 months for strongest patterns
+
+See [PATTERN_SCANNER_README.md](PATTERN_SCANNER_README.md) for detailed documentation.
 
 ### Data Management
 

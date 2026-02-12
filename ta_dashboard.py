@@ -1064,7 +1064,8 @@ else:
     sidebar.info("📊 Intraday updater not available (missing intraday_updater.py)")
 
 # --- Auto Intraday Update During Market Hours (ONLY ONCE) --------------------
-if HAS_INTRADAY_UPDATER and 'intraday_auto_update_done' not in st.session_state:
+# DISABLED: Auto-update turned off by user
+if False and HAS_INTRADAY_UPDATER and 'intraday_auto_update_done' not in st.session_state:
     now = datetime.now()
     current_time = now.time()
     today_weekday = now.weekday()  # Monday=0, Sunday=6
