@@ -242,36 +242,98 @@ def create_pattern_chart(ticker: str, pattern: dict, lookback_days: int = None):
                 key_points = pattern.get('key_points', {})
                 trendlines = pattern.get('trendlines', {})
                 
-                if key_points and trendlines:
-                    # Draw peaks (resistance trendline)
-                    if 'peaks' in key_points and len(key_points['peaks']) >= 2:
-                        peaks_dates = [p['date'] for p in key_points['peaks']]
-                        peaks_prices = [p['price'] for p in key_points['peaks']]
-                        
-                        fig.add_trace(go.Scatter(
-                            x=peaks_dates,
-                            y=peaks_prices,
-                            mode='lines+markers',
-                            line=dict(color='red', width=2, dash='dash'),
-                            marker=dict(size=8, color='red', symbol='triangle-down'),
-                            name='Resistance',
-                            showlegend=False
-                        ))
+                if key_points and trendlines and 'peaks' in key_points and 'troughs' in key_points:
+                    peaks = key_points['peaks']
+                    troughs = key_points['troughs']
                     
-                    # Draw troughs (support trendline)
-                    if 'troughs' in key_points and len(key_points['troughs']) >= 2:
-                        troughs_dates = [t['date'] for t in key_points['troughs']]
-                        troughs_prices = [t['price'] for t in key_points['troughs']]
+                    if len(peaks) >= 2 and len(troughs) >= 2:
+                        # Ascending Triangle: Flat resistance (top), Rising support (bottom)
+                        if 'ascending' in pattern_type.lower():
+                            # Flat resistance at peak level
+                            resistance_level = trendlines['resistance']['level']
+                            fig.add_trace(go.Scatter(
+                                x=[peaks[0]['date'], peaks[-1]['date']],
+                                y=[resistance_level, resistance_level],
+                                mode='lines',
+                                line=dict(color='red', width=3, dash='solid'),
+                                name='Flat Resistance',
+                                showlegend=False
+                            ))
+                            # Mark peaks
+                            for p in peaks[-3:]:
+                                fig.add_trace(go.Scatter(
+                                    x=[p['date']], y=[p['price']],
+                                    mode='markers',
+                                    marker=dict(size=10, color='red', symbol='triangle-down'),
+                                    showlegend=False, hoverinfo='skip'
+                                ))
+                            
+                            # Rising support line
+                            fig.add_trace(go.Scatter(
+                                x=[troughs[0]['date'], troughs[-1]['date']],
+                                y=[troughs[0]['price'], troughs[-1]['price']],
+                                mode='lines+markers',
+                                line=dict(color='green', width=3, dash='solid'),
+                                marker=dict(size=10, color='green', symbol='triangle-up'),
+                                name='Rising Support',
+                                showlegend=False
+                            ))
                         
-                        fig.add_trace(go.Scatter(
-                            x=troughs_dates,
-                            y=troughs_prices,
-                            mode='lines+markers',
-                            line=dict(color='green', width=2, dash='dash'),
-                            marker=dict(size=8, color='green', symbol='triangle-up'),
-                            name='Support',
-                            showlegend=False
-                        ))
+                        # Descending Triangle: Descending resistance (top), Flat support (bottom)
+                        elif 'descending' in pattern_type.lower():
+                            # Descending resistance line
+                            fig.add_trace(go.Scatter(
+                                x=[peaks[0]['date'], peaks[-1]['date']],
+                                y=[peaks[0]['price'], peaks[-1]['price']],
+                                mode='lines+markers',
+                                line=dict(color='red', width=3, dash='solid'),
+                                marker=dict(size=10, color='red', symbol='triangle-down'),
+                                name='Descending Resistance',
+                                showlegend=False
+                            ))
+                            
+                            # Flat support at trough level
+                            support_level = trendlines['support']['level']
+                            fig.add_trace(go.Scatter(
+                                x=[troughs[0]['date'], troughs[-1]['date']],
+                                y=[support_level, support_level],
+                                mode='lines',
+                                line=dict(color='green', width=3, dash='solid'),
+                                name='Flat Support',
+                                showlegend=False
+                            ))
+                            # Mark troughs
+                            for t in troughs[-3:]:
+                                fig.add_trace(go.Scatter(
+                                    x=[t['date']], y=[t['price']],
+                                    mode='markers',
+                                    marker=dict(size=10, color='green', symbol='triangle-up'),
+                                    showlegend=False, hoverinfo='skip'
+                                ))
+                        
+                        # Symmetrical Triangle: Both converging
+                        else:
+                            # Descending resistance
+                            fig.add_trace(go.Scatter(
+                                x=[peaks[0]['date'], peaks[-1]['date']],
+                                y=[peaks[0]['price'], peaks[-1]['price']],
+                                mode='lines+markers',
+                                line=dict(color='red', width=3, dash='solid'),
+                                marker=dict(size=10, color='red', symbol='triangle-down'),
+                                name='Resistance',
+                                showlegend=False
+                            ))
+                            
+                            # Rising support
+                            fig.add_trace(go.Scatter(
+                                x=[troughs[0]['date'], troughs[-1]['date']],
+                                y=[troughs[0]['price'], troughs[-1]['price']],
+                                mode='lines+markers',
+                                line=dict(color='green', width=3, dash='solid'),
+                                marker=dict(size=10, color='green', symbol='triangle-up'),
+                                name='Support',
+                                showlegend=False
+                            ))
             
             # Draw Flag/Pennant pattern (pole + flag channel)
             elif 'flag' in pattern_type:
