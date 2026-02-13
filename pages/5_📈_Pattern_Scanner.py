@@ -160,7 +160,7 @@ def analyze_all_tickers(tickers: list, lookback_months: int = 18, progress_callb
     return ranked_patterns
 
 def create_pattern_chart(ticker: str, pattern: dict, lookback_days: int = None):
-    """Create interactive chart showing the pattern."""
+    """Create interactive chart showing the pattern with shape overlay."""
     try:
         db = get_db()
         
@@ -189,6 +189,50 @@ def create_pattern_chart(ticker: str, pattern: dict, lookback_days: int = None):
             increasing_line_color='#26a69a',
             decreasing_line_color='#ef5350'
         ))
+        
+        # Add pattern shape overlay
+        pattern_type = pattern['pattern'].lower()
+        formation_days = pattern.get('formation_days', 180)
+        pattern_start_idx = max(0, len(df) - formation_days)
+        pattern_df = df.iloc[pattern_start_idx:]
+        
+        # Add pattern region highlight
+        if len(pattern_df) > 0:
+            fig.add_vrect(
+                x0=pattern_df.iloc[0]['date'],
+                x1=pattern_df.iloc[-1]['date'],
+                fillcolor="yellow",
+                opacity=0.1,
+                line_width=0,
+                annotation_text="Pattern Formation",
+                annotation_position="top left"
+            )
+            
+            # Add peak/trough markers for specific patterns
+            if 'shoulder' in pattern_type or 'head' in pattern_type:
+                # Mark key points for H&S patterns
+                highs = pattern_df[pattern_df['high'] == pattern_df['high'].rolling(10, center=True).max()]
+                lows = pattern_df[pattern_df['low'] == pattern_df['low'].rolling(10, center=True).min()]
+                
+                if len(highs) >= 3:
+                    fig.add_trace(go.Scatter(
+                        x=highs.iloc[-3:]['date'],
+                        y=highs.iloc[-3:]['high'],
+                        mode='markers',
+                        marker=dict(size=12, color='red', symbol='triangle-down'),
+                        name='Peaks',
+                        showlegend=False
+                    ))
+                
+                if len(lows) >= 3:
+                    fig.add_trace(go.Scatter(
+                        x=lows.iloc[-3:]['date'],
+                        y=lows.iloc[-3:]['low'],
+                        mode='markers',
+                        marker=dict(size=12, color='green', symbol='triangle-up'),
+                        name='Troughs',
+                        showlegend=False
+                    ))
         
         # Add pattern markers
         current_price = pattern['current_price']
@@ -233,65 +277,24 @@ def create_pattern_chart(ticker: str, pattern: dict, lookback_days: int = None):
         return None
 
 def display_pattern_card(pattern: dict):
-    """Display a pattern as a styled card using Streamlit native components."""
-    signal_color = "green" if pattern['signal'] == 'BUY' else "red"
+    """Display a compact pattern card (1/3 original size)."""
     signal_icon = "📈" if pattern['signal'] == 'BUY' else "📉"
     
     current = pattern['current_price']
-    target_1_3 = pattern.get('target_1_3_days', 0)
-    target_1m = pattern.get('target_1_month', 0)
     target_full = pattern.get('target_full', pattern['target_price'])
     stop = pattern['stop_loss']
-    
-    potential_1_3 = ((target_1_3 - current) / current * 100) if target_1_3 else 0
-    potential_1m = ((target_1m - current) / current * 100) if target_1m else 0
     potential_full = ((target_full - current) / current * 100)
-    
-    risk = abs((current - stop) / current * 100)
-    
     confidence_pct = pattern.get('confidence', 0.5) * 100
-    quality_pct = pattern.get('quality_score', 0.5) * 100
     
-    # Use Streamlit container with columns
-    with st.container():
-        # Header
-        col1, col2 = st.columns([3, 1])
-        with col1:
-            st.markdown(f"### {signal_icon} **{pattern['ticker']}** - {pattern['pattern']}")
-            st.caption(f"Formed over {pattern.get('formation_days', 0)} days")
-        with col2:
-            if pattern['signal'] == 'BUY':
-                st.success(f"**{pattern['signal']}**", icon="📈")
-            else:
-                st.error(f"**{pattern['signal']}**", icon="📉")
-        
-        # Metrics in 3 columns
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            st.metric("Current Price", f"{current:,.0f} VND")
-        with col2:
-            st.metric("1-3 Days Target", f"{target_1_3:,.0f} VND", f"{potential_1_3:+.1f}%")
-        with col3:
-            st.metric("1 Month Target", f"{target_1m:,.0f} VND", f"{potential_1m:+.1f}%")
-        
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            st.metric("Full Target", f"{target_full:,.0f} VND", f"{potential_full:+.1f}%")
-        with col2:
-            st.metric("Stop Loss", f"{stop:,.0f} VND", f"-{risk:.1f}%", delta_color="inverse")
-        with col3:
-            st.metric("Risk/Reward", f"1:{pattern.get('risk_reward', 0):.2f}")
-        
-        # Progress bars
-        col1, col2 = st.columns(2)
-        with col1:
-            st.caption(f"Confidence: {confidence_pct:.0f}%")
-            st.progress(confidence_pct / 100)
-        with col2:
-            st.caption(f"Quality Score: {quality_pct:.0f}%")
-            st.progress(quality_pct / 100)
-        
-        st.divider()
+    # Compact card with header and key metrics only
+    col1, col2, col3 = st.columns([2, 1, 1])
+    with col1:
+        st.markdown(f"**{signal_icon} {pattern['ticker']}** - {pattern['pattern']}")
+        st.caption(f"{pattern.get('formation_days', 0)}d | Conf: {confidence_pct:.0f}%")
+    with col2:
+        st.metric("Current", f"{current:,.0f}")
+    with col3:
+        st.metric("Target", f"{target_full:,.0f}", f"{potential_full:+.1f}%")
 
 # =====================================================================
 # MAIN UI
@@ -505,7 +508,7 @@ if st.session_state.patterns_analyzed and st.session_state.all_patterns:
                     with st.expander(f"View Chart - {pattern['ticker']}"):
                         chart = create_pattern_chart(pattern['ticker'], pattern)
                         if chart:
-                            st.plotly_chart(chart, use_container_width=True)
+                            st.plotly_chart(chart, use_container_width=True, key=f"buy_chart_{i}_{pattern['ticker']}")
             else:
                 st.info("No buy signals found with current filters.")
         
@@ -518,7 +521,7 @@ if st.session_state.patterns_analyzed and st.session_state.all_patterns:
                     with st.expander(f"View Chart - {pattern['ticker']}"):
                         chart = create_pattern_chart(pattern['ticker'], pattern)
                         if chart:
-                            st.plotly_chart(chart, use_container_width=True)
+                            st.plotly_chart(chart, use_container_width=True, key=f"sell_chart_{i}_{pattern['ticker']}")
             else:
                 st.info("No sell signals found with current filters.")
         
@@ -530,7 +533,7 @@ if st.session_state.patterns_analyzed and st.session_state.all_patterns:
                 with st.expander(f"View Chart - {pattern['ticker']}"):
                     chart = create_pattern_chart(pattern['ticker'], pattern)
                     if chart:
-                        st.plotly_chart(chart, use_container_width=True)
+                        st.plotly_chart(chart, use_container_width=True, key=f"all_chart_{i}_{pattern['ticker']}")
 
 elif st.session_state.is_analyzing:
     st.info("Analysis in progress... Please wait.")
