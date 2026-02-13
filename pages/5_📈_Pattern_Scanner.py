@@ -86,13 +86,14 @@ def get_all_tickers_cached():
         st.error(f"Error fetching tickers: {e}")
         return []
 
-def analyze_ticker_patterns(ticker: str, lookback_months: int = 18) -> list:
+def analyze_ticker_patterns(ticker: str, lookback_months: int = 18, include_forming: bool = False) -> list:
     """
     Analyze patterns for a single ticker.
     
     Args:
         ticker: Ticker symbol
         lookback_months: Number of months to look back
+        include_forming: If True, include patterns still forming
     
     Returns:
         List of detected patterns
@@ -112,7 +113,7 @@ def analyze_ticker_patterns(ticker: str, lookback_months: int = 18) -> list:
         detector = PatternDetector(min_pattern_days=30, max_pattern_days=lookback_months * 30)
         
         # Detect all patterns
-        patterns = detector.detect_all_patterns(df, ticker)
+        patterns = detector.detect_all_patterns(df, ticker, include_forming=include_forming)
         
         # Add timeframe targets
         for pattern in patterns:
