@@ -233,7 +233,9 @@ def create_pattern_chart(ticker: str, pattern: dict, lookback_days: int = None):
                     
                     # Add labels
                     yshift = 25 if 'inverse' not in pattern_type.lower() else -25
-                    fig.add_annotation(x=ls['date'], y=ls['price'], text="LS", showarrow=False, yshift=yshift, font=dict(size=12, color='orange', family='Arial Black'))\n                    fig.add_annotation(x=head['date'], y=head['price'], text="HEAD", showarrow=False, yshift=yshift, font=dict(size=12, color='orange', family='Arial Black'))\n                    fig.add_annotation(x=rs['date'], y=rs['price'], text="RS", showarrow=False, yshift=yshift, font=dict(size=12, color='orange', family='Arial Black'))
+                    fig.add_annotation(x=ls['date'], y=ls['price'], text="LS", showarrow=False, yshift=yshift, font=dict(size=12, color='orange', family='Arial Black'))
+                    fig.add_annotation(x=head['date'], y=head['price'], text="HEAD", showarrow=False, yshift=yshift, font=dict(size=12, color='orange', family='Arial Black'))
+                    fig.add_annotation(x=rs['date'], y=rs['price'], text="RS", showarrow=False, yshift=yshift, font=dict(size=12, color='orange', family='Arial Black'))
             
             # Draw Triangle pattern trendlines
             elif 'triangle' in pattern_type:
