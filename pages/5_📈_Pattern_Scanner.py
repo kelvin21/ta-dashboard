@@ -232,9 +232,9 @@ def create_pattern_chart(ticker: str, pattern: dict, lookback_days: int = None):
         st.error(f"Error creating chart: {e}")
         return None
 
-def format_pattern_card(pattern: dict):
-    """Format a pattern as a styled card."""
-    signal_color = "#4CAF50" if pattern['signal'] == 'BUY' else "#f44336"
+def display_pattern_card(pattern: dict):
+    """Display a pattern as a styled card using Streamlit native components."""
+    signal_color = "green" if pattern['signal'] == 'BUY' else "red"
     signal_icon = "📈" if pattern['signal'] == 'BUY' else "📉"
     
     current = pattern['current_price']
@@ -252,103 +252,46 @@ def format_pattern_card(pattern: dict):
     confidence_pct = pattern.get('confidence', 0.5) * 100
     quality_pct = pattern.get('quality_score', 0.5) * 100
     
-    # Pre-format all values to avoid issues with .format()
-    current_fmt = f"{current:,.0f}"
-    target_1_3_fmt = f"{target_1_3:,.0f}"
-    potential_1_3_fmt = f"{potential_1_3:+.1f}"
-    target_1m_fmt = f"{target_1m:,.0f}"
-    potential_1m_fmt = f"{potential_1m:+.1f}"
-    target_full_fmt = f"{target_full:,.0f}"
-    potential_full_fmt = f"{potential_full:+.1f}"
-    stop_fmt = f"{stop:,.0f}"
-    risk_fmt = f"{risk:.1f}"
-    risk_reward_fmt = f"{pattern.get('risk_reward', 0):.2f}"
-    confidence_fmt = f"{confidence_pct:.0f}"
-    quality_fmt = f"{quality_pct:.0f}"
-    
-    card_html = f"""
-    <div style="border-left: 4px solid {signal_color}; padding: 20px; margin: 15px 0; background: white; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.1);">
-        <div style="display: flex; justify-content: space-between; align-items: start; margin-bottom: 15px;">
-            <div>
-                <h3 style="margin: 0; color: #333;">
-                    {signal_icon} <strong>{pattern['ticker']}</strong> - {pattern['pattern']}
-                </h3>
-                <p style="margin: 5px 0 0 0; color: #666; font-size: 0.9em;">
-                    Formed over {pattern.get('formation_days', 0)} days
-                </p>
-            </div>
-            <div style="text-align: right;">
-                <span style="background: {signal_color}; color: white; padding: 8px 16px; border-radius: 20px; font-weight: bold; font-size: 1.1em;">
-                    {pattern['signal']}
-                </span>
-            </div>
-        </div>
+    # Use Streamlit container with columns
+    with st.container():
+        # Header
+        col1, col2 = st.columns([3, 1])
+        with col1:
+            st.markdown(f"### {signal_icon} **{pattern['ticker']}** - {pattern['pattern']}")
+            st.caption(f"Formed over {pattern.get('formation_days', 0)} days")
+        with col2:
+            if pattern['signal'] == 'BUY':
+                st.success(f"**{pattern['signal']}**", icon="📈")
+            else:
+                st.error(f"**{pattern['signal']}**", icon="📉")
         
-        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; margin: 20px 0;">
-            <div style="background: #f5f5f5; padding: 12px; border-radius: 6px;">
-                <div style="color: #666; font-size: 0.85em; margin-bottom: 4px;">Current Price</div>
-                <div style="font-size: 1.3em; font-weight: bold; color: #333;">{current_fmt} VND</div>
-            </div>
-            
-            <div style="background: #e8f5e9; padding: 12px; border-radius: 6px;">
-                <div style="color: #2e7d32; font-size: 0.85em; margin-bottom: 4px;">1-3 Days Target</div>
-                <div style="font-size: 1.3em; font-weight: bold; color: #1b5e20;">
-                    {target_1_3_fmt} ({potential_1_3_fmt}%)
-                </div>
-            </div>
-            
-            <div style="background: #e3f2fd; padding: 12px; border-radius: 6px;">
-                <div style="color: #1565c0; font-size: 0.85em; margin-bottom: 4px;">1 Month Target</div>
-                <div style="font-size: 1.3em; font-weight: bold; color: #0d47a1;">
-                    {target_1m_fmt} ({potential_1m_fmt}%)
-                </div>
-            </div>
-            
-            <div style="background: #fff3e0; padding: 12px; border-radius: 6px;">
-                <div style="color: #e65100; font-size: 0.85em; margin-bottom: 4px;">Full Target</div>
-                <div style="font-size: 1.3em; font-weight: bold; color: #bf360c;">
-                    {target_full_fmt} ({potential_full_fmt}%)
-                </div>
-            </div>
-            
-            <div style="background: #ffebee; padding: 12px; border-radius: 6px;">
-                <div style="color: #c62828; font-size: 0.85em; margin-bottom: 4px;">Stop Loss</div>
-                <div style="font-size: 1.3em; font-weight: bold; color: #b71c1c;">
-                    {stop_fmt} (-{risk_fmt}%)
-                </div>
-            </div>
-            
-            <div style="background: #f3e5f5; padding: 12px; border-radius: 6px;">
-                <div style="color: #6a1b9a; font-size: 0.85em; margin-bottom: 4px;">Risk/Reward</div>
-                <div style="font-size: 1.3em; font-weight: bold; color: #4a148c;">
-                    1:{risk_reward_fmt}
-                </div>
-            </div>
-        </div>
+        # Metrics in 3 columns
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("Current Price", f"{current:,.0f} VND")
+        with col2:
+            st.metric("1-3 Days Target", f"{target_1_3:,.0f} VND", f"{potential_1_3:+.1f}%")
+        with col3:
+            st.metric("1 Month Target", f"{target_1m:,.0f} VND", f"{potential_1m:+.1f}%")
         
-        <div style="display: flex; gap: 20px; margin-top: 15px;">
-            <div style="flex: 1;">
-                <div style="color: #666; font-size: 0.85em; margin-bottom: 8px;">
-                    Confidence: {confidence_fmt}%
-                </div>
-                <div style="background: #e0e0e0; height: 8px; border-radius: 4px; overflow: hidden;">
-                    <div style="background: linear-gradient(90deg, #ff9800, #4caf50); height: 100%; width: {confidence_fmt}%; transition: width 0.3s;"></div>
-                </div>
-            </div>
-            
-            <div style="flex: 1;">
-                <div style="color: #666; font-size: 0.85em; margin-bottom: 8px;">
-                    Quality Score: {quality_fmt}%
-                </div>
-                <div style="background: #e0e0e0; height: 8px; border-radius: 4px; overflow: hidden;">
-                    <div style="background: linear-gradient(90deg, #2196f3, #9c27b0); height: 100%; width: {quality_fmt}%; transition: width 0.3s;"></div>
-                </div>
-            </div>
-        </div>
-    </div>
-    """
-    
-    return card_html
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("Full Target", f"{target_full:,.0f} VND", f"{potential_full:+.1f}%")
+        with col2:
+            st.metric("Stop Loss", f"{stop:,.0f} VND", f"-{risk:.1f}%", delta_color="inverse")
+        with col3:
+            st.metric("Risk/Reward", f"1:{pattern.get('risk_reward', 0):.2f}")
+        
+        # Progress bars
+        col1, col2 = st.columns(2)
+        with col1:
+            st.caption(f"Confidence: {confidence_pct:.0f}%")
+            st.progress(confidence_pct / 100)
+        with col2:
+            st.caption(f"Quality Score: {quality_pct:.0f}%")
+            st.progress(quality_pct / 100)
+        
+        st.divider()
 
 # =====================================================================
 # MAIN UI
@@ -557,7 +500,7 @@ if st.session_state.patterns_analyzed and st.session_state.all_patterns:
             if buy_patterns:
                 st.markdown(f"### Top Buy Opportunities")
                 for i, pattern in enumerate(buy_patterns[:20]):  # Limit to top 20
-                    st.markdown(format_pattern_card(pattern), unsafe_allow_html=True)
+                    display_pattern_card(pattern)
                     
                     with st.expander(f"View Chart - {pattern['ticker']}"):
                         chart = create_pattern_chart(pattern['ticker'], pattern)
@@ -570,7 +513,7 @@ if st.session_state.patterns_analyzed and st.session_state.all_patterns:
             if sell_patterns:
                 st.markdown(f"### Top Sell Opportunities")
                 for i, pattern in enumerate(sell_patterns[:20]):  # Limit to top 20
-                    st.markdown(format_pattern_card(pattern), unsafe_allow_html=True)
+                    display_pattern_card(pattern)
                     
                     with st.expander(f"View Chart - {pattern['ticker']}"):
                         chart = create_pattern_chart(pattern['ticker'], pattern)
@@ -582,7 +525,7 @@ if st.session_state.patterns_analyzed and st.session_state.all_patterns:
         with tab_all:
             st.markdown(f"### All Detected Patterns")
             for i, pattern in enumerate(filtered_patterns[:30]):  # Limit to top 30
-                st.markdown(format_pattern_card(pattern), unsafe_allow_html=True)
+                display_pattern_card(pattern)
                 
                 with st.expander(f"View Chart - {pattern['ticker']}"):
                     chart = create_pattern_chart(pattern['ticker'], pattern)
