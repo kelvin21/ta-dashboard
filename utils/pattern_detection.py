@@ -216,6 +216,9 @@ class PatternDetector:
                                 pattern_start_date = window_df.iloc[peak1]['date']
                                 pattern_days = (window_df.iloc[-1]['date'] - pattern_start_date).days
                                 
+                                # Find trough index
+                                trough_idx = peak1 + np.argmin(low[peak1:peak2+1])
+                                
                                 patterns.append({
                                     'ticker': ticker,
                                     'pattern': 'Double Top',
@@ -229,7 +232,12 @@ class PatternDetector:
                                     'neckline': trough_val,
                                     'formation_days': pattern_days,
                                     'detected_date': df.iloc[-1]['date'],
-                                    'risk_reward': abs(target - current_price) / abs(stop_loss - current_price)
+                                    'risk_reward': abs(target - current_price) / abs(stop_loss - current_price),
+                                    'key_points': {
+                                        'peak1': {'index': peak1, 'price': high[peak1], 'date': window_df.iloc[peak1]['date']},
+                                        'peak2': {'index': peak2, 'price': high[peak2], 'date': window_df.iloc[peak2]['date']},
+                                        'trough': {'index': trough_idx, 'price': trough_val, 'date': window_df.iloc[trough_idx]['date']}
+                                    }
                                 })
             
             # Double Bottom
@@ -251,6 +259,9 @@ class PatternDetector:
                                 pattern_start_date = window_df.iloc[trough1]['date']
                                 pattern_days = (window_df.iloc[-1]['date'] - pattern_start_date).days
                                 
+                                # Find peak index
+                                peak_idx = trough1 + np.argmax(high[trough1:trough2+1])
+                                
                                 patterns.append({
                                     'ticker': ticker,
                                     'pattern': 'Double Bottom',
@@ -264,7 +275,12 @@ class PatternDetector:
                                     'neckline': peak_val,
                                     'formation_days': pattern_days,
                                     'detected_date': df.iloc[-1]['date'],
-                                    'risk_reward': abs(target - current_price) / abs(current_price - stop_loss)
+                                    'risk_reward': abs(target - current_price) / abs(current_price - stop_loss),
+                                    'key_points': {
+                                        'trough1': {'index': trough1, 'price': low[trough1], 'date': window_df.iloc[trough1]['date']},
+                                        'trough2': {'index': trough2, 'price': low[trough2], 'date': window_df.iloc[trough2]['date']},
+                                        'peak': {'index': peak_idx, 'price': peak_val, 'date': window_df.iloc[peak_idx]['date']}
+                                    }
                                 })
         
         return patterns
@@ -460,7 +476,14 @@ class PatternDetector:
                             'neckline': cup_rim,
                             'formation_days': lookback_days,
                             'detected_date': df.iloc[-1]['date'],
-                            'risk_reward': abs(target - current_price) / abs(current_price - stop_loss)
+                            'risk_reward': abs(target - current_price) / abs(current_price - stop_loss),
+                            'key_points': {
+                                'cup_left': {'index': 0, 'price': high[0], 'date': window_df.iloc[0]['date']},
+                                'cup_bottom': {'index': cup_bottom_idx, 'price': cup_bottom, 'date': window_df.iloc[cup_bottom_idx]['date']},
+                                'cup_right': {'index': handle_start, 'price': cup_rim, 'date': window_df.iloc[handle_start]['date']},
+                                'handle_start': handle_start,
+                                'cup_length': int(len(close) * 0.7)
+                            }
                         })
         
         return patterns
@@ -528,7 +551,14 @@ class PatternDetector:
                             'neckline': None,
                             'formation_days': lookback_days,
                             'detected_date': df.iloc[-1]['date'],
-                            'risk_reward': abs(target - current_price) / abs(current_price - stop_loss)
+                            'risk_reward': abs(target - current_price) / abs(current_price - stop_loss),
+                            'key_points': {
+                                'pole_start': {'index': 0, 'price': close[0], 'date': window_df.iloc[0]['date']},
+                                'pole_end': {'index': pole_length, 'price': close[pole_length], 'date': window_df.iloc[pole_length]['date']},
+                                'flag_start': pole_length,
+                                'flag_high': np.max(consolidation),
+                                'flag_low': np.min(consolidation)
+                            }
                         })
         
         return patterns
@@ -578,7 +608,15 @@ class PatternDetector:
                             'neckline': support,
                             'formation_days': lookback_days,
                             'detected_date': df.iloc[-1]['date'],
-                            'risk_reward': abs(target - current_price) / abs(stop_loss - current_price)
+                            'risk_reward': abs(target - current_price) / abs(stop_loss - current_price),
+                            'key_points': {
+                                'peaks': [{'index': p, 'price': high[p], 'date': window_df.iloc[p]['date']} for p in peaks],
+                                'troughs': [{'index': t, 'price': low[t], 'date': window_df.iloc[t]['date']} for t in troughs]
+                            },
+                            'trendlines': {
+                                'resistance': {'slope': high_slope, 'intercept': high_intercept},
+                                'support': {'slope': low_slope, 'intercept': low_intercept}
+                            }
                         })
                 
                 # Falling Wedge (bullish) - both lines falling but converging
@@ -604,7 +642,15 @@ class PatternDetector:
                             'neckline': resistance,
                             'formation_days': lookback_days,
                             'detected_date': df.iloc[-1]['date'],
-                            'risk_reward': abs(target - current_price) / abs(current_price - stop_loss)
+                            'risk_reward': abs(target - current_price) / abs(current_price - stop_loss),
+                            'key_points': {
+                                'peaks': [{'index': p, 'price': high[p], 'date': window_df.iloc[p]['date']} for p in peaks],
+                                'troughs': [{'index': t, 'price': low[t], 'date': window_df.iloc[t]['date']} for t in troughs]
+                            },
+                            'trendlines': {
+                                'resistance': {'slope': high_slope, 'intercept': high_intercept},
+                                'support': {'slope': low_slope, 'intercept': low_intercept}
+                            }
                         })
         
         return patterns

@@ -220,21 +220,20 @@ def create_pattern_chart(ticker: str, pattern: dict, lookback_days: int = None):
                     head = key_points['head']
                     rs = key_points['right_shoulder']
                     
-                    # Draw connecting lines
+                    # Draw connecting lines for peaks
                     fig.add_trace(go.Scatter(
                         x=[ls['date'], head['date'], rs['date']],
                         y=[ls['price'], head['price'], rs['price']],
                         mode='lines+markers',
-                        line=dict(color='orange', width=2, dash='dot'),
-                        marker=dict(size=10, color='orange', symbol='diamond'),
+                        line=dict(color='orange', width=3, dash='solid'),
+                        marker=dict(size=12, color='orange', symbol='diamond'),
                         name='Pattern Shape',
                         showlegend=False
                     ))
                     
                     # Add labels
-                    fig.add_annotation(x=ls['date'], y=ls['price'], text="LS", showarrow=False, yshift=20, font=dict(size=10, color='orange'))
-                    fig.add_annotation(x=head['date'], y=head['price'], text="H", showarrow=False, yshift=20, font=dict(size=10, color='orange'))
-                    fig.add_annotation(x=rs['date'], y=rs['price'], text="RS", showarrow=False, yshift=20, font=dict(size=10, color='orange'))
+                    yshift = 25 if 'inverse' not in pattern_type.lower() else -25
+                    fig.add_annotation(x=ls['date'], y=ls['price'], text="LS", showarrow=False, yshift=yshift, font=dict(size=12, color='orange', family='Arial Black'))\n                    fig.add_annotation(x=head['date'], y=head['price'], text="HEAD", showarrow=False, yshift=yshift, font=dict(size=12, color='orange', family='Arial Black'))\n                    fig.add_annotation(x=rs['date'], y=rs['price'], text="RS", showarrow=False, yshift=yshift, font=dict(size=12, color='orange', family='Arial Black'))
             
             # Draw Triangle pattern trendlines
             elif 'triangle' in pattern_type:
@@ -274,172 +273,226 @@ def create_pattern_chart(ticker: str, pattern: dict, lookback_days: int = None):
             
             # Draw Flag/Pennant pattern (pole + flag channel)
             elif 'flag' in pattern_type:
-                # Identify pole (strong trend before consolidation)
-                pole_length = min(30, len(pattern_df) // 2)  # ~1/2 of pattern
-                flag_start_idx = pole_length
+                key_points = pattern.get('key_points', {})
                 
-                if flag_start_idx < len(pattern_df):
-                    # Draw pole
-                    pole_df = pattern_df.iloc[:flag_start_idx]
+                if key_points and 'pole_start' in key_points and 'pole_end' in key_points:
+                    pole_start = key_points['pole_start']
+                    pole_end = key_points['pole_end']
+                    flag_start_idx = key_points.get('flag_start', 0)
+                    
+                    # Draw pole (strong trend line)
                     fig.add_trace(go.Scatter(
-                        x=[pole_df.iloc[0]['date'], pole_df.iloc[-1]['date']],
-                        y=[pole_df.iloc[0]['close'], pole_df.iloc[-1]['close']],
+                        x=[pole_start['date'], pole_end['date']],
+                        y=[pole_start['price'], pole_end['price']],
                         mode='lines',
-                        line=dict(color='purple', width=3, dash='solid'),
+                        line=dict(color='purple', width=4, dash='solid'),
                         name='Pole',
                         showlegend=False
                     ))
                     
-                    # Draw flag channel (consolidation)
+                    # Mark pole endpoints
+                    fig.add_trace(go.Scatter(
+                        x=[pole_start['date'], pole_end['date']],
+                        y=[pole_start['price'], pole_end['price']],
+                        mode='markers',
+                        marker=dict(size=10, color='purple', symbol='circle'),
+                        showlegend=False
+                    ))
+                    
+                    # Draw flag channel lines
                     flag_df = pattern_df.iloc[flag_start_idx:]
-                    if len(flag_df) >= 5:
-                        flag_highs = flag_df['high'].values
-                        flag_lows = flag_df['low'].values
-                        flag_dates = flag_df['date'].values
+                    if len(flag_df) >= 3:
+                        flag_high = key_points.get('flag_high', flag_df['high'].max())
+                        flag_low = key_points.get('flag_low', flag_df['low'].min())
                         
-                        # Upper channel line
+                        # Upper channel
                         fig.add_trace(go.Scatter(
-                            x=[flag_dates[0], flag_dates[-1]],
-                            y=[max(flag_highs[:3]), max(flag_highs[-3:])],
+                            x=[flag_df.iloc[0]['date'], flag_df.iloc[-1]['date']],
+                            y=[flag_high, flag_high],
                             mode='lines',
                             line=dict(color='orange', width=2, dash='dash'),
-                            name='Flag Upper',
                             showlegend=False
                         ))
                         
-                        # Lower channel line
+                        # Lower channel
                         fig.add_trace(go.Scatter(
-                            x=[flag_dates[0], flag_dates[-1]],
-                            y=[min(flag_lows[:3]), min(flag_lows[-3:])],
+                            x=[flag_df.iloc[0]['date'], flag_df.iloc[-1]['date']],
+                            y=[flag_low, flag_low],
                             mode='lines',
                             line=dict(color='orange', width=2, dash='dash'),
-                            name='Flag Lower',
+                            fill='tonexty',
+                            fillcolor='rgba(255, 165, 0, 0.1)',
                             showlegend=False
                         ))
             
             # Draw Wedge pattern (converging trendlines)
             elif 'wedge' in pattern_type:
-                if len(pattern_df) >= 10:
-                    # Calculate trendlines
-                    highs = pattern_df['high'].values
-                    lows = pattern_df['low'].values
-                    dates = pattern_df['date'].values
-                    indices = np.arange(len(pattern_df))
-                    
-                    # Find peaks and troughs
-                    peaks = argrelextrema(highs, np.greater, order=5)[0]
-                    troughs = argrelextrema(lows, np.less, order=5)[0]
+                key_points = pattern.get('key_points', {})
+                
+                if key_points and 'peaks' in key_points and 'troughs' in key_points:
+                    peaks = key_points['peaks']
+                    troughs = key_points['troughs']
                     
                     if len(peaks) >= 2 and len(troughs) >= 2:
                         # Draw upper trendline (resistance)
+                        peaks_dates = [p['date'] for p in peaks]
+                        peaks_prices = [p['price'] for p in peaks]
+                        
                         fig.add_trace(go.Scatter(
-                            x=[dates[peaks[0]], dates[peaks[-1]]],
-                            y=[highs[peaks[0]], highs[peaks[-1]]],
+                            x=peaks_dates,
+                            y=peaks_prices,
                             mode='lines+markers',
                             line=dict(color='red', width=2, dash='dash'),
-                            marker=dict(size=8, color='red', symbol='triangle-down'),
+                            marker=dict(size=10, color='red', symbol='triangle-down'),
                             name='Resistance',
                             showlegend=False
                         ))
                         
                         # Draw lower trendline (support)
+                        troughs_dates = [t['date'] for t in troughs]
+                        troughs_prices = [t['price'] for t in troughs]
+                        
                         fig.add_trace(go.Scatter(
-                            x=[dates[troughs[0]], dates[troughs[-1]]],
-                            y=[lows[troughs[0]], lows[troughs[-1]]],
+                            x=troughs_dates,
+                            y=troughs_prices,
                             mode='lines+markers',
                             line=dict(color='green', width=2, dash='dash'),
-                            marker=dict(size=8, color='green', symbol='triangle-up'),
+                            marker=dict(size=10, color='green', symbol='triangle-up'),
                             name='Support',
                             showlegend=False
+                        ))
+                        
+                        # Fill between trendlines to show wedge
+                        # Extend lines to show convergence
+                        all_dates = peaks_dates + troughs_dates
+                        fig.add_trace(go.Scatter(
+                            x=[peaks_dates[0], peaks_dates[-1]],
+                            y=[peaks_prices[0], peaks_prices[-1]],
+                            mode='lines',
+                            line=dict(color='red', width=1, dash='solid'),
+                            showlegend=False,
+                            hoverinfo='skip'
+                        ))
+                        fig.add_trace(go.Scatter(
+                            x=[troughs_dates[0], troughs_dates[-1]],
+                            y=[troughs_prices[0], troughs_prices[-1]],
+                            mode='lines',
+                            line=dict(color='green', width=1, dash='solid'),
+                            fill='tonexty',
+                            fillcolor='rgba(128, 128, 128, 0.1)',
+                            showlegend=False,
+                            hoverinfo='skip'
                         ))
             
             # Draw Cup and Handle pattern
             elif 'cup' in pattern_type and 'handle' in pattern_type:
-                if len(pattern_df) >= 20:
-                    # Cup is roughly 2/3 of pattern, handle is 1/3
-                    cup_length = int(len(pattern_df) * 0.67)
+                key_points = pattern.get('key_points', {})
+                
+                if key_points and 'cup_left' in key_points:
+                    cup_left = key_points['cup_left']
+                    cup_bottom = key_points['cup_bottom']
+                    cup_right = key_points['cup_right']
+                    cup_length = key_points.get('cup_length', int(len(pattern_df) * 0.67))
+                    
+                    # Get cup portion
                     cup_df = pattern_df.iloc[:cup_length]
-                    handle_df = pattern_df.iloc[cup_length:]
                     
-                    # Draw cup curve (use close prices)
-                    fig.add_trace(go.Scatter(
-                        x=cup_df['date'],
-                        y=cup_df['close'],
-                        mode='lines',
-                        line=dict(color='blue', width=2, dash='dot', shape='spline'),
-                        name='Cup',
-                        showlegend=False
-                    ))
-                    
-                    # Mark cup rim
-                    rim_price = max(cup_df.iloc[0]['high'], cup_df.iloc[-1]['high'])
-                    fig.add_trace(go.Scatter(
-                        x=[cup_df.iloc[0]['date'], cup_df.iloc[-1]['date']],
-                        y=[rim_price, rim_price],
-                        mode='lines',
-                        line=dict(color='blue', width=1, dash='solid'),
-                        name='Rim',
-                        showlegend=False
-                    ))
-                    
-                    # Draw handle (consolidation channel)
-                    if len(handle_df) >= 3:
+                    if len(cup_df) > 5:
+                        # Draw cup curve (smooth spline through prices)
                         fig.add_trace(go.Scatter(
-                            x=handle_df['date'],
-                            y=handle_df['high'],
+                            x=cup_df['date'],
+                            y=cup_df['close'],
                             mode='lines',
-                            line=dict(color='lightblue', width=1, dash='dash'),
-                            name='Handle',
+                            line=dict(color='blue', width=3, shape='spline'),
+                            name='Cup',
                             showlegend=False
                         ))
+                        
+                        # Mark cup edges and bottom
                         fig.add_trace(go.Scatter(
-                            x=handle_df['date'],
-                            y=handle_df['low'],
-                            mode='lines',
-                            line=dict(color='lightblue', width=1, dash='dash'),
-                            fill='tonexty',
-                            fillcolor='rgba(173, 216, 230, 0.2)',
-                            name='Handle',
+                            x=[cup_left['date'], cup_bottom['date'], cup_right['date']],
+                            y=[cup_left['price'], cup_bottom['price'], cup_right['price']],
+                            mode='markers',
+                            marker=dict(size=12, color='blue', symbol=['circle', 'star', 'circle']),
                             showlegend=False
                         ))
+                        
+                        # Draw rim line
+                        rim_price = (cup_left['price'] + cup_right['price']) / 2
+                        fig.add_trace(go.Scatter(
+                            x=[cup_left['date'], cup_right['date']],
+                            y=[rim_price, rim_price],
+                            mode='lines',
+                            line=dict(color='blue', width=2, dash='solid'),
+                            name='Rim',
+                            showlegend=False
+                        ))
+                        
+                        # Draw handle
+                        handle_df = pattern_df.iloc[cup_length:]
+                        if len(handle_df) >= 3:
+                            fig.add_trace(go.Scatter(
+                                x=handle_df['date'],
+                                y=handle_df['high'],
+                                mode='lines',
+                                line=dict(color='lightblue', width=2, dash='dot'),
+                                showlegend=False
+                            ))
+                            fig.add_trace(go.Scatter(
+                                x=handle_df['date'],
+                                y=handle_df['low'],
+                                mode='lines',
+                                line=dict(color='lightblue', width=2, dash='dot'),
+                                fill='tonexty',
+                                fillcolor='rgba(173, 216, 230, 0.2)',
+                                showlegend=False
+                            ))
             
             # Draw Double Top/Bottom pattern
             elif 'double' in pattern_type:
-                if len(pattern_df) >= 10:
-                    if 'top' in pattern_type:
-                        # Find two highest peaks
-                        sorted_highs = pattern_df.nlargest(10, 'high')
-                        if len(sorted_highs) >= 2:
-                            peak1 = sorted_highs.iloc[0]
-                            peak2 = sorted_highs.iloc[1]
-                            
-                            # Draw M shape
-                            fig.add_trace(go.Scatter(
-                                x=[peak1['date'], peak2['date']],
-                                y=[peak1['high'], peak2['high']],
-                                mode='lines+markers',
-                                line=dict(color='red', width=2, dash='dot'),
-                                marker=dict(size=12, color='red', symbol='x'),
-                                name='Double Top',
-                                showlegend=False
-                            ))
-                    else:  # double bottom
-                        # Find two lowest troughs
-                        sorted_lows = pattern_df.nsmallest(10, 'low')
-                        if len(sorted_lows) >= 2:
-                            trough1 = sorted_lows.iloc[0]
-                            trough2 = sorted_lows.iloc[1]
-                            
-                            # Draw W shape
-                            fig.add_trace(go.Scatter(
-                                x=[trough1['date'], trough2['date']],
-                                y=[trough1['low'], trough2['low']],
-                                mode='lines+markers',
-                                line=dict(color='green', width=2, dash='dot'),
-                                marker=dict(size=12, color='green', symbol='cross'),
-                                name='Double Bottom',
-                                showlegend=False
-                            ))
+                key_points = pattern.get('key_points', {})
+                
+                if 'top' in pattern_type and 'peak1' in key_points and 'peak2' in key_points:
+                    peak1 = key_points['peak1']
+                    peak2 = key_points['peak2']
+                    trough = key_points.get('trough', {})
+                    
+                    # Draw M shape (peak1 -> trough -> peak2)
+                    if trough:
+                        fig.add_trace(go.Scatter(
+                            x=[peak1['date'], trough['date'], peak2['date']],
+                            y=[peak1['price'], trough['price'], peak2['price']],
+                            mode='lines+markers',
+                            line=dict(color='red', width=3, dash='solid'),
+                            marker=dict(size=14, color='red', symbol=['triangle-down', 'circle', 'triangle-down']),
+                            name='Double Top',
+                            showlegend=False
+                        ))
+                        
+                        # Add labels
+                        fig.add_annotation(x=peak1['date'], y=peak1['price'], text="P1", showarrow=False, yshift=20, font=dict(size=12, color='red', family='Arial Black'))
+                        fig.add_annotation(x=peak2['date'], y=peak2['price'], text="P2", showarrow=False, yshift=20, font=dict(size=12, color='red', family='Arial Black'))
+                
+                elif 'bottom' in pattern_type and 'trough1' in key_points and 'trough2' in key_points:
+                    trough1 = key_points['trough1']
+                    trough2 = key_points['trough2']
+                    peak = key_points.get('peak', {})
+                    
+                    # Draw W shape (trough1 -> peak -> trough2)
+                    if peak:
+                        fig.add_trace(go.Scatter(
+                            x=[trough1['date'], peak['date'], trough2['date']],
+                            y=[trough1['price'], peak['price'], trough2['price']],
+                            mode='lines+markers',
+                            line=dict(color='green', width=3, dash='solid'),
+                            marker=dict(size=14, color='green', symbol=['triangle-up', 'circle', 'triangle-up']),
+                            name='Double Bottom',
+                            showlegend=False
+                        ))
+                        
+                        # Add labels
+                        fig.add_annotation(x=trough1['date'], y=trough1['price'], text="T1", showarrow=False, yshift=-20, font=dict(size=12, color='green', family='Arial Black'))
+                        fig.add_annotation(x=trough2['date'], y=trough2['price'], text="T2", showarrow=False, yshift=-20, font=dict(size=12, color='green', family='Arial Black'))
         
         # Add pattern markers
         current_price = pattern['current_price']
