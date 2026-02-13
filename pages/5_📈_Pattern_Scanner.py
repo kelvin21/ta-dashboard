@@ -125,13 +125,14 @@ def analyze_ticker_patterns(ticker: str, lookback_months: int = 18) -> list:
         print(f"Error analyzing {ticker}: {e}")
         return []
 
-def analyze_all_tickers(tickers: list, lookback_months: int = 18, progress_callback=None):
+def analyze_all_tickers(tickers: list, lookback_months: int = 18, include_forming: bool = False, progress_callback=None):
     """
     Analyze patterns for all tickers using parallel processing.
     
     Args:
         tickers: List of ticker symbols
         lookback_months: Number of months to look back
+        include_forming: If True, include patterns still forming
         progress_callback: Function to call with progress updates
     
     Returns:
@@ -141,7 +142,7 @@ def analyze_all_tickers(tickers: list, lookback_months: int = 18, progress_callb
     total = len(tickers)
     
     with ThreadPoolExecutor(max_workers=10) as executor:
-        futures = {executor.submit(analyze_ticker_patterns, ticker, lookback_months): ticker 
+        futures = {executor.submit(analyze_ticker_patterns, ticker, lookback_months, include_forming): ticker 
                    for ticker in tickers}
         
         for i, future in enumerate(futures):
@@ -208,31 +209,66 @@ def create_pattern_chart(ticker: str, pattern: dict, lookback_days: int = None):
                 annotation_position="top left"
             )
             
-            # Add peak/trough markers for specific patterns
+            # Draw Head & Shoulders pattern shape
             if 'shoulder' in pattern_type or 'head' in pattern_type:
-                # Mark key points for H&S patterns
-                highs = pattern_df[pattern_df['high'] == pattern_df['high'].rolling(10, center=True).max()]
-                lows = pattern_df[pattern_df['low'] == pattern_df['low'].rolling(10, center=True).min()]
+                key_points = pattern.get('key_points', {})
                 
-                if len(highs) >= 3:
+                if 'left_shoulder' in key_points and 'head' in key_points and 'right_shoulder' in key_points:
+                    ls = key_points['left_shoulder']
+                    head = key_points['head']
+                    rs = key_points['right_shoulder']
+                    
+                    # Draw connecting lines
                     fig.add_trace(go.Scatter(
-                        x=highs.iloc[-3:]['date'],
-                        y=highs.iloc[-3:]['high'],
-                        mode='markers',
-                        marker=dict(size=12, color='red', symbol='triangle-down'),
-                        name='Peaks',
+                        x=[ls['date'], head['date'], rs['date']],
+                        y=[ls['price'], head['price'], rs['price']],
+                        mode='lines+markers',
+                        line=dict(color='orange', width=2, dash='dot'),
+                        marker=dict(size=10, color='orange', symbol='diamond'),
+                        name='Pattern Shape',
                         showlegend=False
                     ))
+                    
+                    # Add labels
+                    fig.add_annotation(x=ls['date'], y=ls['price'], text="LS", showarrow=False, yshift=20, font=dict(size=10, color='orange'))
+                    fig.add_annotation(x=head['date'], y=head['price'], text="H", showarrow=False, yshift=20, font=dict(size=10, color='orange'))
+                    fig.add_annotation(x=rs['date'], y=rs['price'], text="RS", showarrow=False, yshift=20, font=dict(size=10, color='orange'))
+            
+            # Draw Triangle pattern trendlines
+            elif 'triangle' in pattern_type:
+                key_points = pattern.get('key_points', {})
+                trendlines = pattern.get('trendlines', {})
                 
-                if len(lows) >= 3:
-                    fig.add_trace(go.Scatter(
-                        x=lows.iloc[-3:]['date'],
-                        y=lows.iloc[-3:]['low'],
-                        mode='markers',
-                        marker=dict(size=12, color='green', symbol='triangle-up'),
-                        name='Troughs',
-                        showlegend=False
-                    ))
+                if key_points and trendlines:
+                    # Draw peaks (resistance trendline)
+                    if 'peaks' in key_points and len(key_points['peaks']) >= 2:
+                        peaks_dates = [p['date'] for p in key_points['peaks']]
+                        peaks_prices = [p['price'] for p in key_points['peaks']]
+                        
+                        fig.add_trace(go.Scatter(
+                            x=peaks_dates,
+                            y=peaks_prices,
+                            mode='lines+markers',
+                            line=dict(color='red', width=2, dash='dash'),
+                            marker=dict(size=8, color='red', symbol='triangle-down'),
+                            name='Resistance',
+                            showlegend=False
+                        ))
+                    
+                    # Draw troughs (support trendline)
+                    if 'troughs' in key_points and len(key_points['troughs']) >= 2:
+                        troughs_dates = [t['date'] for t in key_points['troughs']]
+                        troughs_prices = [t['price'] for t in key_points['troughs']]
+                        
+                        fig.add_trace(go.Scatter(
+                            x=troughs_dates,
+                            y=troughs_prices,
+                            mode='lines+markers',
+                            line=dict(color='green', width=2, dash='dash'),
+                            marker=dict(size=8, color='green', symbol='triangle-up'),
+                            name='Support',
+                            showlegend=False
+                        ))
         
         # Add pattern markers
         current_price = pattern['current_price']
@@ -279,6 +315,7 @@ def create_pattern_chart(ticker: str, pattern: dict, lookback_days: int = None):
 def display_pattern_card(pattern: dict):
     """Display a compact pattern card (1/3 original size)."""
     signal_icon = "📈" if pattern['signal'] == 'BUY' else "📉"
+    status_badge = "🔮" if pattern.get('status') == 'forming' else ""
     
     current = pattern['current_price']
     target_full = pattern.get('target_full', pattern['target_price'])
@@ -289,7 +326,7 @@ def display_pattern_card(pattern: dict):
     # Compact card with header and key metrics only
     col1, col2, col3 = st.columns([2, 1, 1])
     with col1:
-        st.markdown(f"**{signal_icon} {pattern['ticker']}** - {pattern['pattern']}")
+        st.markdown(f"**{signal_icon} {pattern['ticker']}** - {pattern['pattern']} {status_badge}")
         st.caption(f"{pattern.get('formation_days', 0)}d | Conf: {confidence_pct:.0f}%")
     with col2:
         st.metric("Current", f"{current:,.0f}")
@@ -367,6 +404,19 @@ with col3:
         help="Minimum acceptable risk/reward ratio"
     )
 
+# Additional options
+col_opt1, col_opt2, col_opt3 = st.columns([2, 2, 2])
+
+with col_opt1:
+    include_forming = st.checkbox(
+        "🔮 Show Forming Patterns",
+        value=False,
+        help="Include patterns that are still forming (not yet complete). These have lower confidence but may signal future opportunities."
+    )
+
+if include_forming:
+    st.info("💡 **Forming patterns** are shown with reduced confidence. They may provide early signals but carry higher risk.")
+
 # Scan button
 st.markdown("---")
 col_btn1, col_btn2, col_btn3 = st.columns([1, 2, 1])
@@ -398,7 +448,7 @@ with col_btn2:
             
             # Run analysis
             start_time = time.time()
-            patterns = analyze_all_tickers(all_tickers, lookback_months, update_progress)
+            patterns = analyze_all_tickers(all_tickers, lookback_months, include_forming, update_progress)
             elapsed = time.time() - start_time
             
             st.session_state.all_patterns = patterns

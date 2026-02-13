@@ -24,13 +24,14 @@ class PatternDetector:
         self.min_pattern_days = min_pattern_days
         self.max_pattern_days = max_pattern_days
     
-    def detect_all_patterns(self, df: pd.DataFrame, ticker: str) -> List[Dict]:
+    def detect_all_patterns(self, df: pd.DataFrame, ticker: str, include_forming: bool = False) -> List[Dict]:
         """
         Detect all patterns in the given price data.
         
         Args:
             df: DataFrame with OHLCV data and date column
             ticker: Ticker symbol
+            include_forming: If True, include patterns still forming (not complete)
         
         Returns:
             List of detected patterns with signals
@@ -44,12 +45,12 @@ class PatternDetector:
         df = df.sort_values('date').reset_index(drop=True)
         
         # Detect various patterns
-        patterns.extend(self._detect_head_shoulders(df, ticker))
-        patterns.extend(self._detect_double_top_bottom(df, ticker))
-        patterns.extend(self._detect_triangles(df, ticker))
-        patterns.extend(self._detect_cup_handle(df, ticker))
-        patterns.extend(self._detect_flags_pennants(df, ticker))
-        patterns.extend(self._detect_wedges(df, ticker))
+        patterns.extend(self._detect_head_shoulders(df, ticker, include_forming))
+        patterns.extend(self._detect_double_top_bottom(df, ticker, include_forming))
+        patterns.extend(self._detect_triangles(df, ticker, include_forming))
+        patterns.extend(self._detect_cup_handle(df, ticker, include_forming))
+        patterns.extend(self._detect_flags_pennants(df, ticker, include_forming))
+        patterns.extend(self._detect_wedges(df, ticker, include_forming))
         
         return patterns
     
@@ -59,7 +60,7 @@ class PatternDetector:
         troughs = argrelextrema(data.values, np.less, order=order)[0]
         return peaks, troughs
     
-    def _detect_head_shoulders(self, df: pd.DataFrame, ticker: str) -> List[Dict]:
+    def _detect_head_shoulders(self, df: pd.DataFrame, ticker: str, include_forming: bool = False) -> List[Dict]:
         """Detect Head and Shoulders (top) and Inverse Head and Shoulders (bottom)."""
         patterns = []
         
@@ -95,7 +96,10 @@ class PatternDetector:
                         current_price = close[-1]
                         
                         # Check if pattern is complete or near completion
-                        if current_price <= neckline * 1.02:  # Within 2% of neckline break
+                        is_complete = current_price <= neckline * 1.02  # Within 2% of neckline break
+                        is_forming = current_price > neckline and current_price < high[right_shoulder] * 1.05
+                        
+                        if is_complete or (include_forming and is_forming):
                             height = high[head] - neckline
                             target = neckline - height
                             stop_loss = high[right_shoulder] * 1.02
@@ -108,14 +112,20 @@ class PatternDetector:
                                 'pattern': 'Head and Shoulders Top',
                                 'type': 'bearish',
                                 'signal': 'SELL',
+                                'status': 'complete' if is_complete else 'forming',
                                 'current_price': current_price,
                                 'target_price': target,
                                 'stop_loss': stop_loss,
-                                'confidence': self._calculate_confidence(current_price, neckline, 'bearish'),
+                                'confidence': self._calculate_confidence(current_price, neckline, 'bearish') * (1.0 if is_complete else 0.6),
                                 'neckline': neckline,
                                 'formation_days': pattern_days,
                                 'detected_date': df.iloc[-1]['date'],
-                                'risk_reward': abs(target - current_price) / abs(stop_loss - current_price)
+                                'risk_reward': abs(target - current_price) / abs(stop_loss - current_price),
+                                'key_points': {
+                                    'left_shoulder': {'index': left_shoulder, 'price': high[left_shoulder], 'date': window_df.iloc[left_shoulder]['date']},
+                                    'head': {'index': head, 'price': high[head], 'date': window_df.iloc[head]['date']},
+                                    'right_shoulder': {'index': right_shoulder, 'price': high[right_shoulder], 'date': window_df.iloc[right_shoulder]['date']}
+                                }
                             })
             
             # Inverse Head and Shoulders (bullish)
@@ -136,7 +146,10 @@ class PatternDetector:
                         current_price = close[-1]
                         
                         # Check if pattern is complete or near completion
-                        if current_price >= neckline * 0.98:  # Within 2% of neckline break
+                        is_complete = current_price >= neckline * 0.98  # Within 2% of neckline break
+                        is_forming = current_price < neckline and current_price > low[right_shoulder] * 0.95
+                        
+                        if is_complete or (include_forming and is_forming):
                             height = neckline - low[head]
                             target = neckline + height
                             stop_loss = low[right_shoulder] * 0.98
@@ -149,19 +162,25 @@ class PatternDetector:
                                 'pattern': 'Inverse Head and Shoulders',
                                 'type': 'bullish',
                                 'signal': 'BUY',
+                                'status': 'complete' if is_complete else 'forming',
                                 'current_price': current_price,
                                 'target_price': target,
                                 'stop_loss': stop_loss,
-                                'confidence': self._calculate_confidence(current_price, neckline, 'bullish'),
+                                'confidence': self._calculate_confidence(current_price, neckline, 'bullish') * (1.0 if is_complete else 0.6),
                                 'neckline': neckline,
                                 'formation_days': pattern_days,
                                 'detected_date': df.iloc[-1]['date'],
-                                'risk_reward': abs(target - current_price) / abs(current_price - stop_loss)
+                                'risk_reward': abs(target - current_price) / abs(current_price - stop_loss),
+                                'key_points': {
+                                    'left_shoulder': {'index': left_shoulder, 'price': low[left_shoulder], 'date': window_df.iloc[left_shoulder]['date']},
+                                    'head': {'index': head, 'price': low[head], 'date': window_df.iloc[head]['date']},
+                                    'right_shoulder': {'index': right_shoulder, 'price': low[right_shoulder], 'date': window_df.iloc[right_shoulder]['date']}
+                                }
                             })
         
         return patterns
     
-    def _detect_double_top_bottom(self, df: pd.DataFrame, ticker: str) -> List[Dict]:
+    def _detect_double_top_bottom(self, df: pd.DataFrame, ticker: str, include_forming: bool = False) -> List[Dict]:
         """Detect Double Top (bearish) and Double Bottom (bullish) patterns."""
         patterns = []
         
@@ -248,7 +267,7 @@ class PatternDetector:
         
         return patterns
     
-    def _detect_triangles(self, df: pd.DataFrame, ticker: str) -> List[Dict]:
+    def _detect_triangles(self, df: pd.DataFrame, ticker: str, include_forming: bool = False) -> List[Dict]:
         """Detect Triangle patterns (Ascending, Descending, Symmetrical)."""
         patterns = []
         
@@ -284,7 +303,10 @@ class PatternDetector:
                     resistance = np.mean(high[peaks])
                     support_current = low_slope * len(window_df) + low_intercept
                     
-                    if current_price > resistance * 0.95:
+                    is_complete = current_price > resistance * 0.95
+                    is_forming = current_price > support_current * 1.05 and current_price < resistance * 0.95
+                    
+                    if is_complete or (include_forming and is_forming):
                         height = resistance - support_current
                         target = resistance + height
                         stop_loss = support_current * 0.98
@@ -294,14 +316,23 @@ class PatternDetector:
                             'pattern': 'Ascending Triangle',
                             'type': 'bullish',
                             'signal': 'BUY',
+                            'status': 'complete' if is_complete else 'forming',
                             'current_price': current_price,
                             'target_price': target,
                             'stop_loss': stop_loss,
-                            'confidence': self._calculate_confidence(current_price, resistance, 'bullish'),
+                            'confidence': self._calculate_confidence(current_price, resistance, 'bullish') * (1.0 if is_complete else 0.6),
                             'neckline': resistance,
                             'formation_days': lookback_days,
                             'detected_date': df.iloc[-1]['date'],
-                            'risk_reward': abs(target - current_price) / abs(current_price - stop_loss)
+                            'risk_reward': abs(target - current_price) / abs(current_price - stop_loss),
+                            'trendlines': {
+                                'resistance': {'slope': high_slope, 'intercept': high_intercept, 'level': resistance},
+                                'support': {'slope': low_slope, 'intercept': low_intercept}
+                            },
+                            'key_points': {
+                                'peaks': [{'index': p, 'price': high[p], 'date': window_df.iloc[p]['date']} for p in peaks[-3:]],
+                                'troughs': [{'index': t, 'price': low[t], 'date': window_df.iloc[t]['date']} for t in troughs[-3:]]
+                            }
                         })
                 
                 # Descending Triangle (bearish)
@@ -309,7 +340,10 @@ class PatternDetector:
                     support = np.mean(low[troughs])
                     resistance_current = high_slope * len(window_df) + high_intercept
                     
-                    if current_price < support * 1.05:
+                    is_complete = current_price < support * 1.05
+                    is_forming = current_price < resistance_current * 0.95 and current_price > support * 1.05
+                    
+                    if is_complete or (include_forming and is_forming):
                         height = resistance_current - support
                         target = support - height
                         stop_loss = resistance_current * 1.02
@@ -319,14 +353,23 @@ class PatternDetector:
                             'pattern': 'Descending Triangle',
                             'type': 'bearish',
                             'signal': 'SELL',
+                            'status': 'complete' if is_complete else 'forming',
                             'current_price': current_price,
                             'target_price': target,
                             'stop_loss': stop_loss,
-                            'confidence': self._calculate_confidence(current_price, support, 'bearish'),
+                            'confidence': self._calculate_confidence(current_price, support, 'bearish') * (1.0 if is_complete else 0.6),
                             'neckline': support,
                             'formation_days': lookback_days,
                             'detected_date': df.iloc[-1]['date'],
-                            'risk_reward': abs(target - current_price) / abs(stop_loss - current_price)
+                            'risk_reward': abs(target - current_price) / abs(stop_loss - current_price),
+                            'trendlines': {
+                                'resistance': {'slope': high_slope, 'intercept': high_intercept},
+                                'support': {'slope': low_slope, 'intercept': low_intercept, 'level': support}
+                            },
+                            'key_points': {
+                                'peaks': [{'index': p, 'price': high[p], 'date': window_df.iloc[p]['date']} for p in peaks[-3:]],
+                                'troughs': [{'index': t, 'price': low[t], 'date': window_df.iloc[t]['date']} for t in troughs[-3:]]
+                            }
                         })
                 
                 # Symmetrical Triangle (continuation pattern)
@@ -364,7 +407,7 @@ class PatternDetector:
         
         return patterns
     
-    def _detect_cup_handle(self, df: pd.DataFrame, ticker: str) -> List[Dict]:
+    def _detect_cup_handle(self, df: pd.DataFrame, ticker: str, include_forming: bool = False) -> List[Dict]:
         """Detect Cup and Handle pattern (bullish)."""
         patterns = []
         
@@ -418,7 +461,7 @@ class PatternDetector:
         
         return patterns
     
-    def _detect_flags_pennants(self, df: pd.DataFrame, ticker: str) -> List[Dict]:
+    def _detect_flags_pennants(self, df: pd.DataFrame, ticker: str, include_forming: bool = False) -> List[Dict]:
         """Detect Flag and Pennant patterns (continuation patterns)."""
         patterns = []
         
@@ -485,7 +528,7 @@ class PatternDetector:
         
         return patterns
     
-    def _detect_wedges(self, df: pd.DataFrame, ticker: str) -> List[Dict]:
+    def _detect_wedges(self, df: pd.DataFrame, ticker: str, include_forming: bool = False) -> List[Dict]:
         """Detect Rising and Falling Wedge patterns."""
         patterns = []
         
