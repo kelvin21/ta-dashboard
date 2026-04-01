@@ -694,6 +694,162 @@ def get_market_breadth_history(start_date: datetime, end_date: datetime) -> pd.D
         st.error(f"Error loading breadth history: {e}")
         return pd.DataFrame()
 
+def detect_rsi_breadth_warnings(df_breadth: pd.DataFrame, lookback: int = 5) -> list:
+    """Detect market direction warnings from RSI breadth data.
+
+    Signals:
+    1. RSI >50% crossing above/below RSI <50% (market sentiment shift)
+    2. Oversold/Overbought percentages near peak (reversal risk)
+
+    Args:
+        df_breadth: Historical breadth DataFrame sorted by date ascending.
+        lookback: Number of bars to detect peaks.
+
+    Returns:
+        List of warning dicts with keys: type, level, message, date.
+    """
+    warnings = []
+
+    if df_breadth.empty or len(df_breadth) < 2:
+        return warnings
+
+    df = df_breadth.sort_values('date').reset_index(drop=True)
+
+    # --- 1. RSI >50% vs <50% crossover ---
+    gt50_col = 'rsi_>50_pct'
+    lt50_col = 'rsi_<50_pct'
+
+    if gt50_col in df.columns and lt50_col in df.columns:
+        gt50 = df[gt50_col].astype(float)
+        lt50 = df[lt50_col].astype(float)
+
+        # Detect crossovers on the last two data points
+        if len(df) >= 2:
+            prev_diff = gt50.iloc[-2] - lt50.iloc[-2]
+            curr_diff = gt50.iloc[-1] - lt50.iloc[-1]
+            latest_date = df['date'].iloc[-1]
+
+            if prev_diff <= 0 and curr_diff > 0:
+                warnings.append({
+                    'type': 'rsi_cross',
+                    'level': 'bullish',
+                    'message': (
+                        f"**RSI Bullish Cross** — RSI >50 ({gt50.iloc[-1]:.1f}%) "
+                        f"crossed above RSI <50 ({lt50.iloc[-1]:.1f}%). "
+                        f"Majority of stocks turning bullish."
+                    ),
+                    'date': latest_date
+                })
+            elif prev_diff >= 0 and curr_diff < 0:
+                warnings.append({
+                    'type': 'rsi_cross',
+                    'level': 'bearish',
+                    'message': (
+                        f"**RSI Bearish Cross** — RSI <50 ({lt50.iloc[-1]:.1f}%) "
+                        f"crossed above RSI >50 ({gt50.iloc[-1]:.1f}%). "
+                        f"Majority of stocks turning bearish."
+                    ),
+                    'date': latest_date
+                })
+
+            # Also warn when one side is dominant (>70%) — strong trend
+            if gt50.iloc[-1] > 70:
+                warnings.append({
+                    'type': 'rsi_dominance',
+                    'level': 'bullish',
+                    'message': (
+                        f"**Strong Bullish Breadth** — {gt50.iloc[-1]:.1f}% of stocks "
+                        f"have RSI > 50. Market breadth is heavily bullish."
+                    ),
+                    'date': latest_date
+                })
+            elif lt50.iloc[-1] > 70:
+                warnings.append({
+                    'type': 'rsi_dominance',
+                    'level': 'bearish',
+                    'message': (
+                        f"**Strong Bearish Breadth** — {lt50.iloc[-1]:.1f}% of stocks "
+                        f"have RSI < 50. Market breadth is heavily bearish."
+                    ),
+                    'date': latest_date
+                })
+
+    # --- 2. Oversold / Overbought near peak ---
+    ob_col = 'rsi_overbought_pct'
+    os_col = 'rsi_oversold_pct'
+
+    for col, label, peak_level, direction in [
+        (ob_col, 'Overbought', 'bearish', 'down'),
+        (os_col, 'Oversold', 'bullish', 'up'),
+    ]:
+        if col not in df.columns:
+            continue
+
+        series = df[col].astype(float)
+
+        if len(series) < lookback + 1:
+            continue
+
+        latest_val = series.iloc[-1]
+        recent = series.iloc[-(lookback + 1):]
+        peak_val = recent.max()
+
+        # Peak detected: value reached a high and is now declining
+        if peak_val > 0 and latest_val < peak_val and peak_val >= recent.iloc[:-1].max():
+            decline_pct = peak_val - latest_val
+
+            if decline_pct >= 2:  # At least 2pp decline from peak
+                if direction == 'down':
+                    warnings.append({
+                        'type': 'rsi_extreme_peak',
+                        'level': peak_level,
+                        'message': (
+                            f"**{label} % Declining from Peak** — "
+                            f"Peaked at {peak_val:.1f}%, now {latest_val:.1f}% "
+                            f"(↓{decline_pct:.1f}pp). "
+                            f"Overbought stocks retreating — potential market top signal."
+                        ),
+                        'date': df['date'].iloc[-1]
+                    })
+                else:
+                    warnings.append({
+                        'type': 'rsi_extreme_peak',
+                        'level': peak_level,
+                        'message': (
+                            f"**{label} % Declining from Peak** — "
+                            f"Peaked at {peak_val:.1f}%, now {latest_val:.1f}% "
+                            f"(↓{decline_pct:.1f}pp). "
+                            f"Oversold stocks recovering — potential market bottom signal."
+                        ),
+                        'date': df['date'].iloc[-1]
+                    })
+
+        # Also warn when current extreme is unusually high
+        if latest_val >= 20:
+            if col == ob_col:
+                warnings.append({
+                    'type': 'rsi_extreme_high',
+                    'level': 'bearish',
+                    'message': (
+                        f"**High Overbought Reading** — {latest_val:.1f}% of stocks "
+                        f"are overbought (RSI > 70). Market may be overextended."
+                    ),
+                    'date': df['date'].iloc[-1]
+                })
+            else:
+                warnings.append({
+                    'type': 'rsi_extreme_high',
+                    'level': 'bullish',
+                    'message': (
+                        f"**High Oversold Reading** — {latest_val:.1f}% of stocks "
+                        f"are oversold (RSI < 30). Market may be near a bottom."
+                    ),
+                    'date': df['date'].iloc[-1]
+                })
+
+    return warnings
+
+
 def plot_vnindex_chart(start_date: datetime, end_date: datetime):
     """Plot VNINDEX technical chart with all indicators."""
     try:
@@ -1208,6 +1364,30 @@ macd_labels = {
 
 st.markdown("## 📈 Market Breadth Analysis")
 st.markdown(f"**Date:** {selected_date} | **Total Tickers:** {breadth.get('total_tickers', 0)}")
+
+# =====================================================================
+# RSI BREADTH WARNINGS — Market Direction Signals
+# =====================================================================
+
+# Load recent breadth history for signal detection (last 30 days)
+_signal_start = selected_datetime - timedelta(days=45)
+_df_signal_hist = get_market_breadth_history(_signal_start, selected_datetime)
+
+if not _df_signal_hist.empty:
+    _warnings = detect_rsi_breadth_warnings(_df_signal_hist, lookback=5)
+
+    if _warnings:
+        st.markdown("### ⚠️ Market Direction Signals")
+
+        for w in _warnings:
+            if w['level'] == 'bullish':
+                st.success(f"🟢 {w['message']}")
+            elif w['level'] == 'bearish':
+                st.error(f"🔴 {w['message']}")
+            else:
+                st.info(f"ℹ️ {w['message']}")
+
+        st.markdown("---")
 
 # =====================================================================
 # PIE CHARTS: Market Distribution
