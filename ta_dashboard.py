@@ -1788,8 +1788,8 @@ else:
         display_cols.insert(macd_idx + 1, "MACD_Slope_Peak")
 
     styled = df_over[display_cols].style
-    styled = styled.applymap(style_stage_column, subset=["Trend (Daily)", "Trend (Weekly)", "Trend (Monthly)"])
-    styled = styled.applymap(style_vol_ratio, subset=["Vol/AvgVol"])
+    styled = styled.map(style_stage_column, subset=["Trend (Daily)", "Trend (Weekly)", "Trend (Monthly)"])
+    styled = styled.map(style_vol_ratio, subset=["Vol/AvgVol"])
     
     def style_row_by_score(row):
         score = row["Score"]
@@ -1812,7 +1812,7 @@ else:
         slope_cols = ["MACD_Slope_3d", "MACD_Slope_Peak"]
         for col in slope_cols:
             if col in display_cols:
-                styled = styled.applymap(style_macd_slope, subset=[col])
+                styled = styled.map(style_macd_slope, subset=[col])
     
     st.dataframe(styled, height=700, use_container_width=True)
     
