@@ -203,8 +203,15 @@ def load_price_range_multi(tickers, start_date, end_date, debug=False):
                     st.write(f"[DEBUG] Querying batch: {batch}")
                 batch_result = db.load_price_range_multi(batch, start_str, end_str)
                 result.update(batch_result)
+                # Log batch results (always, for cloud debugging)
+                loaded_count = sum(1 for df in batch_result.values() if not df.empty)
+                empty_count = sum(1 for df in batch_result.values() if df.empty)
+                if empty_count == len(batch_result):
+                    print(f"⚠️ Batch {i//batch_size + 1}: ALL {len(batch)} tickers returned empty!")
+                    if hasattr(db, '_last_error') and db._last_error:
+                        print(f"  Last DB error: {db._last_error}")
                 if debug:
-                    st.write(f"[DEBUG] Batch result: {len(batch_result)} tickers loaded.")
+                    st.write(f"[DEBUG] Batch result: {loaded_count} loaded, {empty_count} empty out of {len(batch_result)}")
             
             if debug:
                 for t in tickers:
@@ -1731,12 +1738,41 @@ if not df_over.empty and 'Signal' in df_over.columns:
             st.caption("No crossovers expected in next 5 days")
 
 if df_over is None or df_over.empty:
-    st.warning("No data available to build overview. Ensure price_data.db has rows.")
-    # Debug info: show DB path, file existence, and row count
+    st.warning("No data available to build overview.")
+    # Debug info
     st.markdown("#### Debug Info")
-    st.write(f"DB Path: `{DB_PATH}`")
+    st.write(f"HAS_DB_ADAPTER: {HAS_DB_ADAPTER}")
+    st.write(f"DB type: {db.db_type if HAS_DB_ADAPTER else 'N/A'}")
+    st.write(f"all_tickers count: {len(all_tickers)}")
+    st.write(f"tickers (filtered) count: {len(tickers)}")
+    st.write(f"Date range: {start_date} to {end_date}")
+    
+    # Show last MongoDB error if any
+    if HAS_DB_ADAPTER and hasattr(db, '_last_error') and db._last_error:
+        st.error(f"Last DB error: {db._last_error}")
+    
+    # Try a quick MongoDB connectivity test
+    if HAS_DB_ADAPTER and db.db_type == "mongodb":
+        try:
+            test_count = db.price_data.count_documents({})
+            st.write(f"MongoDB total docs: {test_count}")
+            test_tickers = db.price_data.distinct("ticker")
+            st.write(f"MongoDB distinct tickers: {len(test_tickers)}")
+            if test_tickers:
+                # Test a single ticker query
+                from datetime import datetime as dt_cls
+                test_q = {
+                    "ticker": test_tickers[0],
+                    "date": {"$gte": dt_cls.strptime(start_date.strftime("%Y-%m-%d"), "%Y-%m-%d"),
+                             "$lte": dt_cls.strptime(end_date.strftime("%Y-%m-%d"), "%Y-%m-%d")}
+                }
+                test_result = db.price_data.count_documents(test_q)
+                st.write(f"Test query for {test_tickers[0]}: {test_result} docs")
+        except Exception as e:
+            st.error(f"MongoDB connectivity test failed: {e}")
+    
+    st.write(f"DB_PATH: `{DB_PATH}`")
     db_exists = os.path.exists(DB_PATH)
-    st.write(f"DB Exists: {db_exists}")
     if db_exists:
         try:
             conn = sqlite3.connect(DB_PATH)

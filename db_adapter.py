@@ -64,6 +64,7 @@ class DatabaseAdapter:
             connection_string: MongoDB URI or SQLite path
         """
         # Auto-detect database type from environment
+        self._last_error = None
         if db_type is None:
             use_mongo_env = os.getenv("USE_MONGODB", "true").lower()
             use_mongo_env = "true"
@@ -231,8 +232,8 @@ class DatabaseAdapter:
                 tickers = self.price_data.distinct("ticker")
                 return sorted([t for t in tickers if t])
             except Exception as e:
-                if debug:
-                    print(f"MongoDB error: {e}")
+                print(f"⚠️ MongoDB get_all_tickers error: {e}")
+                self._last_error = f"get_all_tickers: {e}"
                 return []
         else:
             try:
@@ -458,9 +459,11 @@ class DatabaseAdapter:
                     "ticker": {"$in": [t.upper() for t in tickers]},
                     "date": {"$gte": datetime.strptime(start_date, "%Y-%m-%d"), "$lte": datetime.strptime(end_date, "%Y-%m-%d")}
                 }
-                cursor = self.price_data.find(query).sort([("date", ASCENDING)]).max_time_ms(180000)  # Added maxTimeMS for 60 seconds timeout
-                print(f"MongoDB multi-load query: {query}")
-                df = pd.DataFrame(list(cursor))
+                cursor = self.price_data.find(query).sort([("date", ASCENDING)]).max_time_ms(180000)
+                print(f"MongoDB multi-load query: tickers={[t.upper() for t in tickers]}, dates={start_date} to {end_date}")
+                docs = list(cursor)
+                print(f"MongoDB multi-load returned {len(docs)} documents")
+                df = pd.DataFrame(docs)
                 if not df.empty:
                     if '_id' in df.columns:
                         df = df.drop('_id', axis=1)
@@ -469,7 +472,8 @@ class DatabaseAdapter:
                     result[t] = df[df['ticker'] == t.upper()].copy() if not df.empty else pd.DataFrame()
                 return result
             except Exception as e:
-                print(f"MongoDB multi-load error: {e}")
+                print(f"⚠️ MongoDB multi-load error: {e}")
+                self._last_error = f"load_price_range_multi: {e}"
                 return {t: pd.DataFrame() for t in tickers}
         else:
             try:
