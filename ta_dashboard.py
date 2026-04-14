@@ -173,86 +173,76 @@ def load_price_range(ticker, start_date, end_date):
     finally:
         conn.close()
 
-@st.cache_data(ttl=int(os.getenv("CACHE_TTL", "1800")))
 def load_price_range_multi(tickers, start_date, end_date, debug=False):
     """
     Load price data for multiple tickers at once.
     Returns a dict: {ticker: DataFrame}
+    NOTE: No @st.cache_data here — caching is handled by the overview cache layer
+    (session_state + db overview_cache). Caching here caused stale empty results.
     """
-    # Convert tuple back to list for internal use (tuples come from cache-friendly call sites)
+    # Convert tuple back to list for internal use
     tickers = list(tickers) if isinstance(tickers, tuple) else tickers
     
     if debug:
         st.write(f"[DEBUG] load_price_range_multi: tickers count={len(tickers)}, start_date={start_date}, end_date={end_date}")
     result = {}
 
-    # Ensure tickers is a list and not empty
     if not tickers:
-        if debug:
-            st.write("[DEBUG] load_price_range_multi: No tickers provided.")
-        return {t: pd.DataFrame() for t in tickers}
+        return {}
 
-    # Use DB adapter if available
+    start_str = start_date if isinstance(start_date, str) else start_date.strftime("%Y-%m-%d")
+    end_str = end_date if isinstance(end_date, str) else end_date.strftime("%Y-%m-%d")
+
+    # Use DB adapter batch query if available
     if HAS_DB_ADAPTER and hasattr(db, "load_price_range_multi"):
         try:
-            start_str = start_date if isinstance(start_date, str) else start_date.strftime("%Y-%m-%d")
-            end_str = end_date if isinstance(end_date, str) else end_date.strftime("%Y-%m-%d")
-            
-            # Split tickers into batches
             batch_size = int(os.getenv("BATCH_SIZE", 20))
             for i in range(0, len(tickers), batch_size):
                 batch = tickers[i:i + batch_size]
                 if debug:
-                    st.write(f"[DEBUG] Querying batch {i//batch_size + 1}: {batch}")
+                    st.write(f"[DEBUG] Querying batch {i//batch_size + 1} ({len(batch)} tickers)")
                 batch_result = db.load_price_range_multi(batch, start_str, end_str)
                 result.update(batch_result)
-                # Log batch results (always, for cloud debugging)
                 loaded_count = sum(1 for df in batch_result.values() if not df.empty)
                 empty_count = sum(1 for df in batch_result.values() if df.empty)
-                if empty_count == len(batch_result):
-                    err_msg = f"⚠️ Batch {i//batch_size + 1}: ALL {len(batch)} tickers returned empty!"
-                    print(err_msg)
-                    if hasattr(db, '_last_error') and db._last_error:
-                        err_msg += f" Last DB error: {db._last_error}"
-                        print(f"  Last DB error: {db._last_error}")
-                    if debug:
-                        st.warning(err_msg)
                 if debug:
-                    st.write(f"[DEBUG] Batch result: {loaded_count} loaded, {empty_count} empty out of {len(batch_result)}")
-            
-            if debug:
-                for t in tickers:
-                    df = result.get(t, pd.DataFrame())
-                    if not df.empty:
-                        result[t] = df.sort_values('date', ascending=True)
-                        st.write(f"[DEBUG] DB-adapter {t}: rows={len(df)}")
-            return result
+                    st.write(f"[DEBUG] Batch result: {loaded_count} loaded, {empty_count} empty")
+                # If entire batch returned empty, log for diagnostics
+                if loaded_count == 0 and empty_count > 0:
+                    print(f"⚠️ Batch {i//batch_size + 1}: ALL {len(batch)} tickers returned empty!")
+                    if hasattr(db, '_last_error') and db._last_error:
+                        print(f"  Last DB error: {db._last_error}")
         except Exception as e:
-            st.error(f"Database adapter error: {e}")
-            return {t: pd.DataFrame() for t in tickers}
+            print(f"⚠️ Batch load_price_range_multi failed: {e}")
+            if debug:
+                st.error(f"Batch query error: {e}")
+            # result may be partially filled; continue to fallback below
 
-    # Fallback: sequentially call load_price_range
-    for t in tickers:
-        try:
-            df = load_price_range(t, start_date, end_date)
-            if not df.empty:
-                result[t] = df.sort_values('date', ascending=True)
-            if debug:
-                st.write(f"[DEBUG] Fallback {t}: rows={len(df)}")
-        except Exception as e:
-            if debug:
-                st.write(f"[DEBUG] Error loading data for {t}: {e}")
-            result[t] = pd.DataFrame()
+    # Fallback: for any tickers still missing data, query individually
+    missing_tickers = [t for t in tickers if t not in result or result.get(t, pd.DataFrame()).empty]
+    if missing_tickers and HAS_DB_ADAPTER:
+        if debug:
+            st.write(f"[DEBUG] Fallback: querying {len(missing_tickers)} tickers individually")
+        for t in missing_tickers:
+            try:
+                df = db.load_price_range(t.upper(), start_str, end_str)
+                if not df.empty:
+                    result[t] = df
+                    if debug:
+                        st.write(f"[DEBUG] Fallback {t}: {len(df)} rows")
+            except Exception as e:
+                if debug:
+                    st.write(f"[DEBUG] Fallback error for {t}: {e}")
+                result[t] = pd.DataFrame()
 
-    # Extra debug: show summary if all are empty
-    if all(df.empty for df in result.values()):
-        if HAS_DB_ADAPTER and db.db_type == "mongodb":
-            if hasattr(db, '_last_error') and db._last_error:
-                st.error(f"MongoDB error: {db._last_error}")
-            if debug:
-                st.write("[DEBUG] load_price_range_multi: All tickers returned empty DataFrames (MongoDB mode).")
-        elif debug:
-            st.write("[DEBUG] load_price_range_multi: All tickers returned empty DataFrames.")
+    # Final check: report if everything is still empty
+    total_loaded = sum(1 for df in result.values() if not df.empty)
+    if total_loaded == 0 and len(tickers) > 0:
+        print(f"⚠️ load_price_range_multi: ALL {len(tickers)} tickers returned empty after batch + fallback")
+        if hasattr(db, '_last_error') and db._last_error:
+            print(f"  Last DB error: {db._last_error}")
+    elif debug:
+        st.write(f"[DEBUG] load_price_range_multi: {total_loaded}/{len(tickers)} tickers loaded successfully")
 
     return result
 
@@ -541,7 +531,7 @@ def build_overview(tickers, start_date, end_date, lookback=20, max_rows=200, deb
     # Load price data for all tickers
     if debug:
         st.write("[DEBUG] Loading price data for tickers...")
-    df_map = load_price_range_multi(tuple(tickers[:max_rows]), start_date, end_date, debug=debug)
+    df_map = load_price_range_multi(tickers[:max_rows], start_date, end_date, debug=debug)
     if debug:
         st.write(f"[DEBUG] Loaded price data for {len(df_map)} tickers.")
 
@@ -866,6 +856,10 @@ if sidebar.button("Clear cache & reload"):
     try:
         load_price_range.clear()
         get_all_tickers.clear()
+        # Clear overview cache from session state
+        keys_to_clear = [k for k in st.session_state if k.startswith("overview_")]
+        for k in keys_to_clear:
+            del st.session_state[k]
         # Clear overview cache from database
         if HAS_DB_ADAPTER:
             db.clear_overview_cache()
@@ -1659,8 +1653,9 @@ with st.spinner("Building overview for tickers in DB..."):
                         if debug:
                             st.write(f"[DEBUG] Error saving to database cache: {e}")
         
-        # Store in session state for current session
-        st.session_state[cache_key] = df_over
+        # Store in session state for current session (only if non-empty to avoid caching failures)
+        if df_over is not None and not df_over.empty:
+            st.session_state[cache_key] = df_over
 
 # Main view: always show today/overview table with current date in header
 current_date_str = datetime.now().strftime("%Y-%m-%d")  # <-- Add this line before using current_date_str
