@@ -343,9 +343,19 @@ def _overview_row(t, df, lookback, debug):
     if df.empty:
         return None
 
+    # Ensure date column is datetime, sorted, and deduplicated
+    df = df.copy()
+    df['date'] = pd.to_datetime(df['date'])
+    df = df.sort_values('date', ascending=True).drop_duplicates(subset=['date'], keep='last').reset_index(drop=True)
+    
+    if len(df) < 3:
+        if debug:
+            st.write(f"[{t}] Only {len(df)} rows after dedup — skipping")
+        return None
+
     latest = df.iloc[-1]
     close = float(latest['close'])
-    latest_date = latest['date']  # Extract the latest bar date
+    latest_date = latest['date']
     
     current_vol = float(latest['volume'])
     close_series = df['close'].astype(float)
@@ -395,7 +405,7 @@ def _overview_row(t, df, lookback, debug):
         stageW = detect_stage(histW, lookback=lookback)
         histW_val = float(histW.iat[-1]) if not histW.empty and not pd.isna(histW.iat[-1]) else np.nan
 
-    df_m_full = df.set_index('date').resample('M').agg({
+    df_m_full = df.set_index('date').resample('ME').agg({
         'open':'first',
         'high':'max',
         'low':'min',
@@ -536,6 +546,7 @@ def build_overview(tickers, start_date, end_date, lookback=20, max_rows=200, deb
         st.write(f"[DEBUG] Loaded price data for {len(df_map)} tickers.")
 
     # Process each ticker
+    error_count = 0
     for t in tickers[:max_rows]:
         if debug:
             st.write(f"[DEBUG] Processing ticker: {t}")
@@ -553,16 +564,22 @@ def build_overview(tickers, start_date, end_date, lookback=20, max_rows=200, deb
             if row:
                 rows.append(row)
                 if debug:
-                    st.write(f"[DEBUG] Successfully generated row for {t}: {row}")
+                    st.write(f"[DEBUG] Successfully generated row for {t}")
             else:
                 if debug:
                     st.write(f"[DEBUG] No row generated for {t}.")
         except Exception as e:
+            error_count += 1
+            print(f"⚠️ Error building overview row for {t}: {e}")
             if debug:
                 st.write(f"[DEBUG] Error building overview row for {t}: {e}")
+                import traceback
+                st.code(traceback.format_exc())
 
+    if error_count > 0:
+        print(f"⚠️ build_overview: {error_count}/{len(tickers[:max_rows])} tickers had errors")
     if debug:
-        st.write(f"[DEBUG] build_overview: Processed {len(rows)} tickers.")
+        st.write(f"[DEBUG] build_overview: Processed {len(rows)} tickers ({error_count} errors).")
 
     # Convert rows to a DataFrame
     if debug:
@@ -752,7 +769,8 @@ def plot_multi_tf_macd(ticker, start_date, end_date, lookback):
     st.write(f"[DEBUG] Loaded data for {ticker}: {len(df)} rows")
 
     # Ensure data is sorted in ascending order for calculations
-    df = df.sort_values('date', ascending=True).reset_index(drop=True)
+    df['date'] = pd.to_datetime(df['date'])
+    df = df.sort_values('date', ascending=True).drop_duplicates(subset=['date'], keep='last').reset_index(drop=True)
     
     # Pre-convert close to float once
     close = df['close'].astype(float)
@@ -784,7 +802,7 @@ def plot_multi_tf_macd(ticker, start_date, end_date, lookback):
     st.write(f"[DEBUG] Weekly MACD stage for {ticker}: {stageW}")
     
     # Pre-calculate monthly resampling
-    df_m = df.set_index('date').resample('M').agg({
+    df_m = df.set_index('date').resample('ME').agg({
         'open': 'first',
         'high': 'max',
         'low': 'min',
