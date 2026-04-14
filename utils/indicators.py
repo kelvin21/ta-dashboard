@@ -239,7 +239,8 @@ def calculate_bollinger_bands(close_series: pd.Series, period: int = 20, std_dev
 
 
 def calculate_all_indicators(df: pd.DataFrame, ema_periods=None, rsi_period=14, 
-                             macd_params=(12, 26, 9), bb_params=(20, 2.0)) -> pd.DataFrame:
+                             macd_params=(12, 26, 9), bb_params=(20, 2.0),
+                             skip_macd_stage: bool = False) -> pd.DataFrame:
     """
     Calculate all technical indicators for a DataFrame with OHLCV data.
     
@@ -249,6 +250,8 @@ def calculate_all_indicators(df: pd.DataFrame, ema_periods=None, rsi_period=14,
         rsi_period: RSI period (default 14)
         macd_params: MACD parameters (fast, slow, signal) - default (12, 26, 9)
         bb_params: Bollinger Bands parameters (period, std_dev) - default (20, 2.0)
+        skip_macd_stage: If True, skip the row-by-row MACD stage calculation (use when
+            caller will compute MACD stage separately via detect_macd_stage_fast)
     
     Returns:
         DataFrame with all indicators added as new columns
@@ -276,19 +279,22 @@ def calculate_all_indicators(df: pd.DataFrame, ema_periods=None, rsi_period=14,
     df['macd_histogram'] = hist  # Alias for compatibility
     
     # Calculate MACD stage (simplified for momentum detection)
-    try:
-        from .macd_utils import get_simple_macd_stage
-        
-        # Calculate stage for each row using current and previous histogram
-        df['macd_stage'] = 'neutral'
-        for i in range(1, len(df)):
-            if pd.notna(df.iloc[i]['macd_hist']) and pd.notna(df.iloc[i-1]['macd_hist']):
-                df.at[df.index[i], 'macd_stage'] = get_simple_macd_stage(
-                    df.iloc[i]['macd_hist'],
-                    df.iloc[i-1]['macd_hist']
-                )
-    except Exception as e:
-        # If MACD stage calculation fails, continue without it
+    if not skip_macd_stage:
+        try:
+            from .macd_utils import get_simple_macd_stage
+            
+            # Calculate stage for each row using current and previous histogram
+            df['macd_stage'] = 'neutral'
+            for i in range(1, len(df)):
+                if pd.notna(df.iloc[i]['macd_hist']) and pd.notna(df.iloc[i-1]['macd_hist']):
+                    df.at[df.index[i], 'macd_stage'] = get_simple_macd_stage(
+                        df.iloc[i]['macd_hist'],
+                        df.iloc[i-1]['macd_hist']
+                    )
+        except Exception as e:
+            # If MACD stage calculation fails, continue without it
+            df['macd_stage'] = 'neutral'
+    else:
         df['macd_stage'] = 'neutral'
     
     # Calculate Bollinger Bands

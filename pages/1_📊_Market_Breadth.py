@@ -111,6 +111,40 @@ def load_price_data_for_ticker(ticker: str, start_date: datetime, end_date: date
     except Exception as e:
         return pd.DataFrame()
 
+def load_price_data_batch(tickers: List[str], start_date: datetime, end_date: datetime) -> Dict[str, pd.DataFrame]:
+    """Load price data for all tickers in a single MongoDB query, then split by ticker in memory.
+    
+    This is much faster than N individual queries (1 round trip instead of N).
+    """
+    try:
+        db = get_db()
+        collection = db.price_data
+        
+        query = {
+            "ticker": {"$in": [t.upper() for t in tickers]},
+            "date": {"$gte": start_date, "$lte": end_date}
+        }
+        cursor = collection.find(query).sort("date", 1)
+        docs = list(cursor)
+        
+        if not docs:
+            return {}
+        
+        df_all = pd.DataFrame(docs)
+        if '_id' in df_all.columns:
+            df_all = df_all.drop('_id', axis=1)
+        if 'date' in df_all.columns:
+            df_all['date'] = pd.to_datetime(df_all['date'])
+        
+        # Split by ticker into dict
+        result = {}
+        for ticker, group in df_all.groupby('ticker'):
+            result[ticker] = group.reset_index(drop=True)
+        
+        return result
+    except Exception as e:
+        return {}
+
 def calculate_indicators_for_ticker(ticker: str, start_date: datetime, end_date: datetime, skip_macd_stage: bool = False) -> pd.DataFrame:
     """Calculate all indicators for a ticker.
     
@@ -135,7 +169,9 @@ def calculate_indicators_for_ticker(ticker: str, start_date: datetime, end_date:
             return pd.DataFrame()
         
         # Calculate indicators on full dataset (including warmup)
-        df = calculate_all_indicators(df)
+        # skip_macd_stage=True skips the slow row-by-row loop in calculate_all_indicators
+        # since we use detect_macd_stage_fast (vectorized) below
+        df = calculate_all_indicators(df, skip_macd_stage=True)
         
         # Calculate MACD stage for each row (fast vectorized method)
         if not skip_macd_stage and 'macd_hist' in df.columns:
@@ -151,6 +187,27 @@ def calculate_indicators_for_ticker(ticker: str, start_date: datetime, end_date:
         return df
     except Exception as e:
         st.error(f"Error calculating indicators for {ticker}: {e}")
+        return pd.DataFrame()
+
+def calculate_indicators_from_df(df: pd.DataFrame, start_date: datetime, skip_macd_stage: bool = False) -> pd.DataFrame:
+    """Calculate indicators from a pre-loaded DataFrame (no DB query needed).
+    
+    Used with load_price_data_batch to avoid per-ticker DB queries.
+    """
+    try:
+        if df.empty or 'close' not in df.columns:
+            return pd.DataFrame()
+        
+        df = calculate_all_indicators(df, skip_macd_stage=True)
+        
+        if not skip_macd_stage and 'macd_hist' in df.columns:
+            df['macd_stage'] = detect_macd_stage_fast(df['macd_hist'], lookback=5)
+        elif skip_macd_stage and 'macd_hist' in df.columns:
+            df['macd_stage'] = 'N/A'
+        
+        df = df[df['date'] >= start_date].copy()
+        return df
+    except Exception:
         return pd.DataFrame()
 
 async def calculate_indicators_for_ticker_async(
@@ -175,7 +232,8 @@ async def calculate_indicators_for_ticker_async(
             return (ticker, pd.DataFrame())
         
         # Calculate indicators on full dataset (including warmup)
-        df = calculate_all_indicators(df)
+        # skip_macd_stage=True skips the slow row-by-row loop
+        df = calculate_all_indicators(df, skip_macd_stage=True)
         
         # Calculate MACD stage for each row (fast vectorized method)
         if 'macd_hist' in df.columns:
@@ -415,6 +473,8 @@ def calculate_macd_stages_for_ticker(ticker: str, start_date: datetime, end_date
         True if successful, False otherwise
     """
     try:
+        from pymongo import UpdateOne
+        
         # Load with warmup for proper stage detection
         warmup_days = 365
         warmup_start = start_date - timedelta(days=warmup_days)
@@ -425,7 +485,7 @@ def calculate_macd_stages_for_ticker(ticker: str, start_date: datetime, end_date
             return False
         
         # Calculate only MACD
-        df = calculate_all_indicators(df)
+        df = calculate_all_indicators(df, skip_macd_stage=True)
         
         if 'macd_hist' not in df.columns:
             return False
@@ -436,51 +496,47 @@ def calculate_macd_stages_for_ticker(ticker: str, start_date: datetime, end_date
         # Trim to target range
         df = df[df['date'] >= start_date].copy()
         
-        # Update only the macd_stage field in database
-        from pymongo import MongoClient
-        mongo_uri = os.getenv("MONGODB_URI")
-        if not mongo_uri:
-            return False
-            
-        client = MongoClient(mongo_uri + "&socketTimeoutMS=60000&connectTimeoutMS=60000")
-        db_name = os.getenv("MONGODB_DB_NAME", "macd_reversal")
-        collection = client[db_name].indicators
+        # Update only the macd_stage field in database using bulk_write
+        db = get_db()
+        collection = db.indicators
         
+        now = datetime.now()
+        operations = []
         for _, row in df.iterrows():
             if pd.notna(row.get('date')):
                 date_value = row['date']
                 if isinstance(date_value, pd.Timestamp):
                     date_value = date_value.to_pydatetime()
                 
-                collection.update_one(
+                operations.append(UpdateOne(
                     {"ticker": ticker.upper(), "date": date_value},
                     {"$set": {
                         "macd_stage": str(row.get('macd_stage', 'N/A')),
-                        "updated_at": datetime.now()
+                        "updated_at": now
                     }}
-                )
+                ))
         
-        client.close()
+        if operations:
+            collection.bulk_write(operations, ordered=False)
+        
         return True
     except Exception as e:
         return False
 
 
 def save_indicators_to_db(ticker: str, df: pd.DataFrame) -> bool:
-    """Save calculated indicators to database."""
+    """Save calculated indicators to database using bulk_write for speed."""
     try:
-        from pymongo import MongoClient
-        mongo_uri = os.getenv("MONGODB_URI")
-        if not mongo_uri:
-            return False
-            
-        client = MongoClient(mongo_uri + "&socketTimeoutMS=60000&connectTimeoutMS=60000")
-        db_name = os.getenv("MONGODB_DB_NAME", "macd_reversal")
-        collection = client[db_name].indicators
+        from pymongo import UpdateOne
+        
+        db = get_db()
+        collection = db.indicators
+        
+        operations = []
+        now = datetime.now()
         
         for _, row in df.iterrows():
             if pd.notna(row.get('date')):
-                # Convert date to datetime if it's a Timestamp
                 date_value = row['date']
                 if isinstance(date_value, pd.Timestamp):
                     date_value = date_value.to_pydatetime()
@@ -502,16 +558,19 @@ def save_indicators_to_db(ticker: str, df: pd.DataFrame) -> bool:
                     'bb_upper': float(row.get('bb_upper', np.nan)),
                     'bb_middle': float(row.get('bb_middle', np.nan)),
                     'bb_lower': float(row.get('bb_lower', np.nan)),
-                    'updated_at': datetime.now()
+                    'updated_at': now
                 }
                 
-                collection.update_one(
+                operations.append(UpdateOne(
                     {"ticker": ticker.upper(), "date": date_value},
                     {"$set": indicators},
                     upsert=True
-                )
+                ))
         
-        client.close()
+        if operations:
+            # bulk_write sends all operations in a single network round trip
+            collection.bulk_write(operations, ordered=False)
+        
         return True
     except Exception as e:
         st.error(f"Error saving indicators: {e}")
@@ -520,17 +579,10 @@ def save_indicators_to_db(ticker: str, df: pd.DataFrame) -> bool:
 def get_indicators_for_date(target_date: datetime) -> pd.DataFrame:
     """Get all indicators for all tickers on a specific date."""
     try:
-        from pymongo import MongoClient
-        mongo_uri = os.getenv("MONGODB_URI")
-        if not mongo_uri:
-            return pd.DataFrame()
-            
-        client = MongoClient(mongo_uri + "&socketTimeoutMS=60000&connectTimeoutMS=60000")
-        db_name = os.getenv("MONGODB_DB_NAME", "macd_reversal")
-        collection = client[db_name].indicators
+        db = get_db()
+        collection = db.indicators
         
         docs = list(collection.find({"date": target_date}))
-        client.close()
         
         if not docs:
             return pd.DataFrame()
@@ -632,14 +684,8 @@ def calculate_market_breadth(df_indicators: pd.DataFrame) -> dict:
 def save_market_breadth(date: datetime, breadth_data: dict) -> bool:
     """Save market breadth to database."""
     try:
-        from pymongo import MongoClient
-        mongo_uri = os.getenv("MONGODB_URI")
-        if not mongo_uri:
-            return False
-            
-        client = MongoClient(mongo_uri + "&socketTimeoutMS=60000&connectTimeoutMS=60000")
-        db_name = os.getenv("MONGODB_DB_NAME", "macd_reversal")
-        collection = client[db_name].market_breadth
+        db = get_db()
+        collection = db.market_breadth
         
         # Convert numpy types to Python native types
         clean_breadth_data = convert_numpy_types(breadth_data)
@@ -656,7 +702,6 @@ def save_market_breadth(date: datetime, breadth_data: dict) -> bool:
             upsert=True
         )
         
-        client.close()
         return True
     except Exception as e:
         st.error(f"Error saving market breadth: {e}")
@@ -665,19 +710,12 @@ def save_market_breadth(date: datetime, breadth_data: dict) -> bool:
 def get_market_breadth_history(start_date: datetime, end_date: datetime) -> pd.DataFrame:
     """Get market breadth history from database."""
     try:
-        from pymongo import MongoClient
-        mongo_uri = os.getenv("MONGODB_URI")
-        if not mongo_uri:
-            return pd.DataFrame()
-            
-        client = MongoClient(mongo_uri + "&socketTimeoutMS=60000&connectTimeoutMS=60000")
-        db_name = os.getenv("MONGODB_DB_NAME", "macd_reversal")
-        collection = client[db_name].market_breadth
+        db = get_db()
+        collection = db.market_breadth
         
         query = {"date": {"$gte": start_date, "$lte": end_date}}
         cursor = collection.find(query).sort("date", 1)
         docs = list(cursor)
-        client.close()
         
         if not docs:
             return pd.DataFrame()
@@ -859,8 +897,8 @@ def plot_vnindex_chart(start_date: datetime, end_date: datetime):
             st.warning("No VNINDEX data available")
             return
         
-        # Calculate indicators
-        df = calculate_all_indicators(df)
+        # Calculate indicators (skip slow MACD stage - not needed for chart)
+        df = calculate_all_indicators(df, skip_macd_stage=True)
         
         # Create subplots
         fig = make_subplots(
@@ -1132,19 +1170,29 @@ with st.sidebar:
                         use_async = False
                 
                 if not use_async or not HAS_MOTOR:
-                    # === SYNCHRONOUS PROCESSING (FALLBACK) ===
+                    # === SYNCHRONOUS PROCESSING (OPTIMIZED BATCH) ===
                     success_count = 0
                     failed_count = 0
+                    
+                    # Batch load price data for all tickers (1 query instead of N)
+                    warmup_days = 365
+                    warmup_start = calc_start_date - timedelta(days=warmup_days)
+                    
+                    status_text.text("📦 Loading price data for all tickers (batch)...")
+                    price_data_batch = load_price_data_batch(all_tickers, warmup_start, calc_end_date)
                     
                     for idx, ticker in enumerate(all_tickers):
                         status_text.text(f"Processing {ticker} ({idx + 1}/{len(all_tickers)})...")
                         
                         try:
-                            df_indicators = calculate_indicators_for_ticker(
-                                ticker,
-                                calc_start_date,
-                                calc_end_date
-                            )
+                            df_price = price_data_batch.get(ticker.upper(), pd.DataFrame())
+                            
+                            if not df_price.empty:
+                                df_indicators = calculate_indicators_from_df(
+                                    df_price, calc_start_date, skip_macd_stage=False
+                                )
+                            else:
+                                df_indicators = pd.DataFrame()
                             
                             if not df_indicators.empty:
                                 if save_indicators_to_db(ticker, df_indicators):
@@ -1237,24 +1285,31 @@ if df_indicators.empty:
     
     success_count = 0
     failed_count = 0
-    ticker_times = []
     
     start_time = datetime.now()
     phase1_start = datetime.now()
     
-    status_text.text("📊 Phase 1/2: Calculating fast indicators (EMA, RSI, MACD)...")
+    status_text.text("📦 Phase 1/2: Loading price data (batch)...")
+    
+    # Batch load all tickers' price data in a single query
+    warmup_days = 365
+    warmup_start = calc_start_date - timedelta(days=warmup_days)
+    price_data_batch = load_price_data_batch(all_tickers, warmup_start, calc_end_date)
+    
+    load_elapsed = (datetime.now() - phase1_start).total_seconds()
+    status_text.text(f"📊 Phase 1/2: Data loaded in {load_elapsed:.1f}s. Calculating indicators...")
     
     for idx, ticker in enumerate(all_tickers):
-        ticker_start = datetime.now()
-        
         try:
-            # Skip MACD stage for faster initial load
-            df_indicators_calc = calculate_indicators_for_ticker(
-                ticker,
-                calc_start_date,
-                calc_end_date,
-                skip_macd_stage=True  # Fast mode!
-            )
+            df_price = price_data_batch.get(ticker.upper(), pd.DataFrame())
+            
+            if not df_price.empty:
+                # Skip MACD stage for faster initial load
+                df_indicators_calc = calculate_indicators_from_df(
+                    df_price, calc_start_date, skip_macd_stage=True
+                )
+            else:
+                df_indicators_calc = pd.DataFrame()
             
             if not df_indicators_calc.empty:
                 if save_indicators_to_db(ticker, df_indicators_calc):
@@ -1266,15 +1321,9 @@ if df_indicators.empty:
         except Exception as e:
             failed_count += 1
         
-        ticker_elapsed = (datetime.now() - ticker_start).total_seconds()
-        ticker_times.append(ticker_elapsed)
-        avg_time = sum(ticker_times) / len(ticker_times)
-        remaining = (len(all_tickers) - idx - 1) * avg_time
-        
         progress_bar.progress((idx + 1) / len(all_tickers))
         status_text.text(
-            f"Phase 1: {ticker} ({idx + 1}/{len(all_tickers)}) | "
-            f"{ticker_elapsed:.1f}s | Avg: {avg_time:.1f}s | ETA: {remaining:.0f}s"
+            f"Phase 1: {ticker} ({idx + 1}/{len(all_tickers)})"
         )
     
     phase1_elapsed = (datetime.now() - phase1_start).total_seconds()
