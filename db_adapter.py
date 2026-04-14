@@ -247,14 +247,14 @@ class DatabaseAdapter:
                 return []
     
     def load_price_range(self, ticker: str, start_date: str, end_date: str) -> pd.DataFrame:
-        """Load price data for a ticker within a date ranload_price_rangege."""
+        """Load price data for a ticker within a date range."""
         if self.db_type == "mongodb":
             try:
                 query = {
                     "ticker": ticker.upper(),
                     "date": {"$gte": datetime.strptime(start_date, "%Y-%m-%d"), "$lte": datetime.strptime(end_date, "%Y-%m-%d")}
                 }
-                cursor = self.price_data.find(query).sort([("date", ASCENDING)])  # Fixed sorting syntax
+                cursor = self.price_data.find(query, batch_size=5000).max_time_ms(120000)
                 df = pd.DataFrame(list(cursor))
                 
                 if not df.empty:
@@ -262,6 +262,7 @@ class DatabaseAdapter:
                     if '_id' in df.columns:
                         df = df.drop('_id', axis=1)
                     df['date'] = pd.to_datetime(df['date'])
+                    df = df.sort_values('date', ascending=True)
                     
                     # Ensure required columns exist
                     for col in ['open', 'high', 'low', 'close', 'volume']:
@@ -271,6 +272,7 @@ class DatabaseAdapter:
                 return df
             except Exception as e:
                 print(f"MongoDB load error: {e}")
+                self._last_error = f"load_price_range: {e}"
                 return pd.DataFrame()
         else:
             try:
@@ -455,12 +457,17 @@ class DatabaseAdapter:
         result = {}
         if self.db_type == "mongodb":
             try:
+                upper_tickers = [t.upper() for t in tickers]
+                start_dt = datetime.strptime(start_date, "%Y-%m-%d")
+                end_dt = datetime.strptime(end_date, "%Y-%m-%d")
                 query = {
-                    "ticker": {"$in": [t.upper() for t in tickers]},
-                    "date": {"$gte": datetime.strptime(start_date, "%Y-%m-%d"), "$lte": datetime.strptime(end_date, "%Y-%m-%d")}
+                    "ticker": {"$in": upper_tickers},
+                    "date": {"$gte": start_dt, "$lte": end_dt}
                 }
-                cursor = self.price_data.find(query).sort([("date", ASCENDING)]).max_time_ms(180000)
-                print(f"MongoDB multi-load query: tickers={[t.upper() for t in tickers]}, dates={start_date} to {end_date}")
+                # Skip server-side sort to avoid 32MB sort memory limit on Atlas free tier
+                # Sort in Python after fetching instead
+                cursor = self.price_data.find(query, batch_size=5000).max_time_ms(180000)
+                print(f"MongoDB multi-load query: tickers={upper_tickers}, dates={start_date} to {end_date}")
                 docs = list(cursor)
                 print(f"MongoDB multi-load returned {len(docs)} documents")
                 df = pd.DataFrame(docs)
@@ -468,6 +475,7 @@ class DatabaseAdapter:
                     if '_id' in df.columns:
                         df = df.drop('_id', axis=1)
                     df['date'] = pd.to_datetime(df['date'])
+                    df = df.sort_values(['ticker', 'date'], ascending=[True, True])
                 for t in tickers:
                     result[t] = df[df['ticker'] == t.upper()].copy() if not df.empty else pd.DataFrame()
                 return result

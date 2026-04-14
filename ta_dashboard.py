@@ -98,7 +98,7 @@ if 'selected_ticker' not in st.session_state:
     st.session_state.selected_ticker = None
 
 # Export commonly used functions - updated to use db_adapter
-@st.cache_resource(ttl=int(os.getenv("CACHE_TTL", "1800")))
+@st.cache_data(ttl=int(os.getenv("CACHE_TTL", "1800")))
 def get_all_tickers(debug=False):
     if HAS_DB_ADAPTER:
         try:
@@ -130,7 +130,7 @@ def get_all_tickers(debug=False):
             st.write(f"[DEBUG] Fallback ticker query error: {e}")
         return []
 
-@st.cache_resource(ttl=int(os.getenv("CACHE_TTL", "1800")))
+@st.cache_data(ttl=int(os.getenv("CACHE_TTL", "1800")))
 def load_price_range(ticker, start_date, end_date):
     """
     Load price data for a single ticker within a date range.
@@ -173,18 +173,21 @@ def load_price_range(ticker, start_date, end_date):
     finally:
         conn.close()
 
-@st.cache_resource(ttl=int(os.getenv("CACHE_TTL", "1800")))
+@st.cache_data(ttl=int(os.getenv("CACHE_TTL", "1800")))
 def load_price_range_multi(tickers, start_date, end_date, debug=False):
     """
     Load price data for multiple tickers at once.
     Returns a dict: {ticker: DataFrame}
     """
+    # Convert tuple back to list for internal use (tuples come from cache-friendly call sites)
+    tickers = list(tickers) if isinstance(tickers, tuple) else tickers
+    
     if debug:
-        st.write(f"[DEBUG] load_price_range_multi: tickers={tickers}, start_date={start_date}, end_date={end_date}")
+        st.write(f"[DEBUG] load_price_range_multi: tickers count={len(tickers)}, start_date={start_date}, end_date={end_date}")
     result = {}
 
     # Ensure tickers is a list and not empty
-    if not isinstance(tickers, list) or not tickers:
+    if not tickers:
         if debug:
             st.write("[DEBUG] load_price_range_multi: No tickers provided.")
         return {t: pd.DataFrame() for t in tickers}
@@ -196,20 +199,24 @@ def load_price_range_multi(tickers, start_date, end_date, debug=False):
             end_str = end_date if isinstance(end_date, str) else end_date.strftime("%Y-%m-%d")
             
             # Split tickers into batches
-            batch_size = int(os.getenv("BATCH_SIZE", 20))  # Default batch size is 50
+            batch_size = int(os.getenv("BATCH_SIZE", 20))
             for i in range(0, len(tickers), batch_size):
                 batch = tickers[i:i + batch_size]
                 if debug:
-                    st.write(f"[DEBUG] Querying batch: {batch}")
+                    st.write(f"[DEBUG] Querying batch {i//batch_size + 1}: {batch}")
                 batch_result = db.load_price_range_multi(batch, start_str, end_str)
                 result.update(batch_result)
                 # Log batch results (always, for cloud debugging)
                 loaded_count = sum(1 for df in batch_result.values() if not df.empty)
                 empty_count = sum(1 for df in batch_result.values() if df.empty)
                 if empty_count == len(batch_result):
-                    print(f"⚠️ Batch {i//batch_size + 1}: ALL {len(batch)} tickers returned empty!")
+                    err_msg = f"⚠️ Batch {i//batch_size + 1}: ALL {len(batch)} tickers returned empty!"
+                    print(err_msg)
                     if hasattr(db, '_last_error') and db._last_error:
+                        err_msg += f" Last DB error: {db._last_error}"
                         print(f"  Last DB error: {db._last_error}")
+                    if debug:
+                        st.warning(err_msg)
                 if debug:
                     st.write(f"[DEBUG] Batch result: {loaded_count} loaded, {empty_count} empty out of {len(batch_result)}")
             
@@ -217,11 +224,11 @@ def load_price_range_multi(tickers, start_date, end_date, debug=False):
                 for t in tickers:
                     df = result.get(t, pd.DataFrame())
                     if not df.empty:
-                        result[t] = df.sort_values('date', ascending=True)  # Sort by date in ascending order
+                        result[t] = df.sort_values('date', ascending=True)
                         st.write(f"[DEBUG] DB-adapter {t}: rows={len(df)}")
             return result
         except Exception as e:
-            st.error(f"[DEBUG] Database adapter error: {e}")
+            st.error(f"Database adapter error: {e}")
             return {t: pd.DataFrame() for t in tickers}
 
     # Fallback: sequentially call load_price_range
@@ -229,7 +236,7 @@ def load_price_range_multi(tickers, start_date, end_date, debug=False):
         try:
             df = load_price_range(t, start_date, end_date)
             if not df.empty:
-                result[t] = df.sort_values('date', ascending=True)  # Sort by date in ascending order
+                result[t] = df.sort_values('date', ascending=True)
             if debug:
                 st.write(f"[DEBUG] Fallback {t}: rows={len(df)}")
         except Exception as e:
@@ -238,21 +245,14 @@ def load_price_range_multi(tickers, start_date, end_date, debug=False):
             result[t] = pd.DataFrame()
 
     # Extra debug: show summary if all are empty
-    if debug and all(df.empty for df in result.values()):
-        st.write("[DEBUG] load_price_range_multi: All tickers returned empty DataFrames.")
-        st.write(f"[DEBUG] DB_PATH: {DB_PATH}")
-        try:
-            conn = sqlite3.connect(DB_PATH)
-            cur = conn.cursor()
-            cur.execute("SELECT MIN(date), MAX(date) FROM price_data")
-            minmax = cur.fetchone()
-            st.write(f"[DEBUG] price_data date range in DB: {minmax}")
-            cur.execute("SELECT COUNT(*) FROM price_data")
-            total_rows = cur.fetchone()[0]
-            st.write(f"[DEBUG] price_data total rows: {total_rows}")
-            conn.close()
-        except Exception as e:
-            st.write(f"[DEBUG] Error querying DB for min/max date: {e}")
+    if all(df.empty for df in result.values()):
+        if HAS_DB_ADAPTER and db.db_type == "mongodb":
+            if hasattr(db, '_last_error') and db._last_error:
+                st.error(f"MongoDB error: {db._last_error}")
+            if debug:
+                st.write("[DEBUG] load_price_range_multi: All tickers returned empty DataFrames (MongoDB mode).")
+        elif debug:
+            st.write("[DEBUG] load_price_range_multi: All tickers returned empty DataFrames.")
 
     return result
 
@@ -541,7 +541,7 @@ def build_overview(tickers, start_date, end_date, lookback=20, max_rows=200, deb
     # Load price data for all tickers
     if debug:
         st.write("[DEBUG] Loading price data for tickers...")
-    df_map = load_price_range_multi(tickers[:max_rows], start_date, end_date, debug=debug)
+    df_map = load_price_range_multi(tuple(tickers[:max_rows]), start_date, end_date, debug=debug)
     if debug:
         st.write(f"[DEBUG] Loaded price data for {len(df_map)} tickers.")
 
@@ -1759,53 +1759,66 @@ if df_over is None or df_over.empty:
             test_tickers = db.price_data.distinct("ticker")
             st.write(f"MongoDB distinct tickers: {len(test_tickers)}")
             if test_tickers:
-                # Test a single ticker query
+                # Test a single ticker query with find() (not just count) to match load_price_range_multi behavior
                 from datetime import datetime as dt_cls
+                start_str = start_date.strftime("%Y-%m-%d") if hasattr(start_date, 'strftime') else str(start_date)
+                end_str = end_date.strftime("%Y-%m-%d") if hasattr(end_date, 'strftime') else str(end_date)
+                test_ticker = test_tickers[0]
                 test_q = {
-                    "ticker": test_tickers[0],
-                    "date": {"$gte": dt_cls.strptime(start_date.strftime("%Y-%m-%d"), "%Y-%m-%d"),
-                             "$lte": dt_cls.strptime(end_date.strftime("%Y-%m-%d"), "%Y-%m-%d")}
+                    "ticker": test_ticker,
+                    "date": {"$gte": dt_cls.strptime(start_str, "%Y-%m-%d"),
+                             "$lte": dt_cls.strptime(end_str, "%Y-%m-%d")}
                 }
-                test_result = db.price_data.count_documents(test_q)
-                st.write(f"Test query for {test_tickers[0]}: {test_result} docs")
+                test_count_result = db.price_data.count_documents(test_q)
+                st.write(f"Test count_documents for {test_ticker}: {test_count_result} docs")
+                
+                # Test actual find() to verify data retrieval works
+                test_docs = list(db.price_data.find(test_q).limit(5))
+                st.write(f"Test find() for {test_ticker}: {len(test_docs)} docs (limit 5)")
+                if test_docs:
+                    sample = test_docs[0]
+                    st.write(f"Sample doc keys: {list(sample.keys())}")
+                    st.write(f"Sample date type: {type(sample.get('date'))}, value: {sample.get('date')}")
+                
+                # Test load_price_range_multi directly for first ticker
+                try:
+                    test_multi = db.load_price_range_multi([test_ticker], start_str, end_str)
+                    test_df = test_multi.get(test_ticker, pd.DataFrame())
+                    st.write(f"Test load_price_range_multi for {test_ticker}: {len(test_df)} rows")
+                    if hasattr(db, '_last_error') and db._last_error:
+                        st.error(f"DB error after test load: {db._last_error}")
+                except Exception as e:
+                    st.error(f"load_price_range_multi test failed: {e}")
+                
+                # Test load_price_range for single ticker
+                try:
+                    test_single = db.load_price_range(test_ticker, start_str, end_str)
+                    st.write(f"Test load_price_range for {test_ticker}: {len(test_single)} rows")
+                except Exception as e:
+                    st.error(f"load_price_range test failed: {e}")
+                    
         except Exception as e:
             st.error(f"MongoDB connectivity test failed: {e}")
     
-    st.write(f"DB_PATH: `{DB_PATH}`")
-    db_exists = os.path.exists(DB_PATH)
-    if db_exists:
-        try:
-            conn = sqlite3.connect(DB_PATH)
-            cur = conn.cursor()
-            cur.execute("SELECT COUNT(*) FROM price_data")
-            row_count = cur.fetchone()[0]
-            st.write(f"price_data row count: {row_count}")
-            cur.execute("SELECT DISTINCT ticker FROM price_data")
-            tickers_in_db = [r[0] for r in cur.fetchall()]
-            st.write(f"Tickers in DB: {tickers_in_db[:20]}{' ...' if len(tickers_in_db) > 20 else ''}")
-            # Additional debug: show sample rows for first few tickers
-            for sample_ticker in tickers_in_db[:3]:
-                cur.execute("SELECT * FROM price_data WHERE ticker = ? ORDER BY date DESC LIMIT 5", (sample_ticker,))
-                sample_rows = cur.fetchall()
-                st.write(f"Sample rows for ticker {sample_ticker}:")
-                for r in sample_rows:
-                    st.write(r)
-            # Show tickers requested for overview but not found in DB
-           
-            missing_tickers = [t for t in all_tickers if t not in tickers_in_db]
-            if missing_tickers:
-                st.write(f"Tickers requested but not found in DB: {missing_tickers[:10]}{' ...' if len(missing_tickers) > 10 else ''}")
-            # Show tickers with no data in requested date range
-            for t in all_tickers[:5]:
-                cur.execute("SELECT COUNT(*) FROM price_data WHERE ticker = ? AND date >= ? AND date <= ?", (t, start_date.strftime("%Y-%m-%d"), end_date.strftime("%Y-%m-%d")))
-                cnt = cur.fetchone()[0]
-                if cnt == 0:
-                    st.write(f"[DEBUG] Ticker {t} has no rows in date range {start_date} to {end_date}")
-            conn.close()
-        except Exception as e:
-            st.write(f"DB error: {e}")
-    else:
-        st.write("Database file not found.")
+    # Only check SQLite if NOT using MongoDB
+    if not (HAS_DB_ADAPTER and db.db_type == "mongodb"):
+        st.write(f"DB_PATH: `{DB_PATH}`")
+        db_exists = os.path.exists(DB_PATH)
+        if db_exists:
+            try:
+                conn = sqlite3.connect(DB_PATH)
+                cur = conn.cursor()
+                cur.execute("SELECT COUNT(*) FROM price_data")
+                row_count = cur.fetchone()[0]
+                st.write(f"price_data row count: {row_count}")
+                cur.execute("SELECT DISTINCT ticker FROM price_data")
+                tickers_in_db = [r[0] for r in cur.fetchall()]
+                st.write(f"Tickers in DB: {tickers_in_db[:20]}{' ...' if len(tickers_in_db) > 20 else ''}")
+                conn.close()
+            except Exception as e:
+                st.write(f"DB error: {e}")
+        else:
+            st.write("Database file not found.")
 else:
     # Display main overview table
     display_cols = ["Ticker", "Close", "Trend (Daily)", "Trend (Weekly)", "Trend (Monthly)", "Score", "MACD_Hist_Daily", "MACD_Hist_Weekly", "MACD_Hist_Monthly", "Vol/AvgVol", "Signal"]
